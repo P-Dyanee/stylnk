@@ -6,6 +6,7 @@ import {
   Spacing,
   Typography,
 } from "@/constants/theme";
+import { useAppTheme } from "@/src/theme/app-theme";
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
 import {
@@ -72,25 +73,42 @@ function CallIcon({
   );
 }
 
-function CallItem({ item }: { item: Call }) {
+function CallItem({
+  item,
+  palette,
+}: {
+  item: Call;
+  palette: ReturnType<typeof useAppTheme>["palette"];
+}) {
   return (
     <View style={styles.callItem}>
       <Avatar name={item.name} />
       <View style={styles.callContent}>
         <Text
-          style={[styles.callName, item.type === "missed" && styles.missedName]}
+          style={[
+            styles.callName,
+            { color: item.type === "missed" ? Colors.danger : palette.text },
+          ]}
         >
           {item.name}
         </Text>
         <View style={styles.callMeta}>
           <CallIcon type={item.type} callType={item.callType} />
-          <Text style={styles.callTime}>{item.time}</Text>
+          <Text style={[styles.callTime, { color: palette.textSecondary }]}>
+            {item.time}
+          </Text>
           {item.duration && (
-            <Text style={styles.callDuration}> · {item.duration}</Text>
+            <Text style={[styles.callDuration, { color: palette.textMuted }]}>
+              {" · "}
+              {item.duration}
+            </Text>
           )}
         </View>
       </View>
-      <TouchableOpacity style={styles.callBackBtn} activeOpacity={0.7}>
+      <TouchableOpacity
+        style={[styles.callBackBtn, { backgroundColor: palette.primarySurface }]}
+        activeOpacity={0.7}
+      >
         <Ionicons
           name={item.callType === "video" ? "videocam-outline" : "call-outline"}
           size={20}
@@ -102,13 +120,20 @@ function CallItem({ item }: { item: Call }) {
 }
 
 export default function CallsScreen() {
+  const { palette } = useAppTheme();
+
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor={Colors.background} />
+    <SafeAreaView style={[styles.container, { backgroundColor: palette.background }]}>
+      <StatusBar
+        barStyle={palette.statusBar === "dark" ? "light-content" : "dark-content"}
+        backgroundColor={palette.background}
+      />
 
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Calls</Text>
-        <TouchableOpacity style={styles.headerButton}>
+        <Text style={[styles.headerTitle, { color: palette.text }]}>Calls</Text>
+        <TouchableOpacity
+          style={[styles.headerButton, { backgroundColor: palette.primarySurface }]}
+        >
           <Ionicons name="search-outline" size={22} color={Colors.primary} />
         </TouchableOpacity>
       </View>
@@ -116,8 +141,10 @@ export default function CallsScreen() {
       <FlatList
         data={MOCK_CALLS}
         keyExtractor={(item) => item.id}
-        renderItem={({ item }) => <CallItem item={item} />}
-        ItemSeparatorComponent={() => <View style={styles.separator} />}
+        renderItem={({ item }) => <CallItem item={item} palette={palette} />}
+        ItemSeparatorComponent={() => (
+          <View style={[styles.separator, { backgroundColor: palette.divider }]} />
+        )}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.listContent}
       />
@@ -130,7 +157,7 @@ export default function CallsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.background },
+  container: { flex: 1 },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -141,14 +168,12 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: Typography.fontSizes.xxxl,
     fontWeight: Typography.fontWeights.bold,
-    color: Colors.text,
     letterSpacing: -0.5,
   },
   headerButton: {
     width: 40,
     height: 40,
     borderRadius: BorderRadius.full,
-    backgroundColor: Colors.primarySurface,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -157,7 +182,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.md,
+    paddingVertical: 14,
   },
   avatarCircle: {
     backgroundColor: Colors.primary,
@@ -173,23 +198,20 @@ const styles = StyleSheet.create({
   callName: {
     fontSize: Typography.fontSizes.md,
     fontWeight: Typography.fontWeights.medium,
-    color: Colors.text,
-    marginBottom: 3,
+    marginBottom: 4,
   },
-  missedName: { color: Colors.danger },
   callMeta: { flexDirection: "row", alignItems: "center" },
   callIconRow: { flexDirection: "row", alignItems: "center", marginRight: 6 },
-  callTime: { fontSize: Typography.fontSizes.sm, color: Colors.textSecondary },
-  callDuration: { fontSize: Typography.fontSizes.sm, color: Colors.textMuted },
+  callTime: { fontSize: Typography.fontSizes.sm },
+  callDuration: { fontSize: Typography.fontSizes.sm },
   callBackBtn: {
     width: 40,
     height: 40,
     borderRadius: BorderRadius.full,
-    backgroundColor: Colors.primarySurface,
     alignItems: "center",
     justifyContent: "center",
   },
-  separator: { height: 1, backgroundColor: Colors.divider, marginLeft: 88 },
+  separator: { height: 1, marginLeft: 88 },
   fab: {
     position: "absolute",
     bottom: 90,

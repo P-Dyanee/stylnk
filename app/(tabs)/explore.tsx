@@ -1,112 +1,172 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import {
+  BorderRadius,
+  Colors,
+  Shadows,
+  Spacing,
+  Typography,
+} from "@/constants/theme";
+import { useAppTheme } from "@/src/theme/app-theme";
+import { Ionicons } from "@expo/vector-icons";
+import { Link } from "expo-router";
+import {
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 
-import { Collapsible } from '@/components/ui/collapsible';
-import { ExternalLink } from '@/components/external-link';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Fonts } from '@/constants/theme';
+const sections = [
+  {
+    title: "What works now",
+    items: [
+      "Register and login with the backend",
+      "See your own profile details from saved session data",
+      "Browse chats, groups, calls, and individual message threads",
+    ],
+  },
+  {
+    title: "What to build next",
+    items: [
+      "Real group data and group chat threads",
+      "Create chat / create group actions",
+      "Presence, unread counts, and live updates",
+    ],
+  },
+];
 
-export default function TabTwoScreen() {
+export default function ExploreScreen() {
+  const { palette } = useAppTheme();
+
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#D0D0D0', dark: '#353636' }}
-      headerImage={
-        <IconSymbol
-          size={310}
-          color="#808080"
-          name="chevron.left.forwardslash.chevron.right"
-          style={styles.headerImage}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText
-          type="title"
-          style={{
-            fontFamily: Fonts.rounded,
-          }}>
-          Explore
-        </ThemedText>
-      </ThemedView>
-      <ThemedText>This app includes example code to help you get started.</ThemedText>
-      <Collapsible title="File-based routing">
-        <ThemedText>
-          This app has two screens:{' '}
-          <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> and{' '}
-          <ThemedText type="defaultSemiBold">app/(tabs)/explore.tsx</ThemedText>
-        </ThemedText>
-        <ThemedText>
-          The layout file in <ThemedText type="defaultSemiBold">app/(tabs)/_layout.tsx</ThemedText>{' '}
-          sets up the tab navigator.
-        </ThemedText>
-        <ExternalLink href="https://docs.expo.dev/router/introduction">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Android, iOS, and web support">
-        <ThemedText>
-          You can open this project on Android, iOS, and the web. To open the web version, press{' '}
-          <ThemedText type="defaultSemiBold">w</ThemedText> in the terminal running this project.
-        </ThemedText>
-      </Collapsible>
-      <Collapsible title="Images">
-        <ThemedText>
-          For static images, you can use the <ThemedText type="defaultSemiBold">@2x</ThemedText> and{' '}
-          <ThemedText type="defaultSemiBold">@3x</ThemedText> suffixes to provide files for
-          different screen densities
-        </ThemedText>
-        <Image
-          source={require('@/assets/images/react-logo.png')}
-          style={{ width: 100, height: 100, alignSelf: 'center' }}
-        />
-        <ExternalLink href="https://reactnative.dev/docs/images">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Light and dark mode components">
-        <ThemedText>
-          This template has light and dark mode support. The{' '}
-          <ThemedText type="defaultSemiBold">useColorScheme()</ThemedText> hook lets you inspect
-          what the user&apos;s current color scheme is, and so you can adjust UI colors accordingly.
-        </ThemedText>
-        <ExternalLink href="https://docs.expo.dev/develop/user-interface/color-themes/">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Animations">
-        <ThemedText>
-          This template includes an example of an animated component. The{' '}
-          <ThemedText type="defaultSemiBold">components/HelloWave.tsx</ThemedText> component uses
-          the powerful{' '}
-          <ThemedText type="defaultSemiBold" style={{ fontFamily: Fonts.mono }}>
-            react-native-reanimated
-          </ThemedText>{' '}
-          library to create a waving hand animation.
-        </ThemedText>
-        {Platform.select({
-          ios: (
-            <ThemedText>
-              The <ThemedText type="defaultSemiBold">components/ParallaxScrollView.tsx</ThemedText>{' '}
-              component provides a parallax effect for the header image.
-            </ThemedText>
-          ),
-        })}
-      </Collapsible>
-    </ParallaxScrollView>
+    <ScrollView
+      style={[styles.container, { backgroundColor: palette.background }]}
+      contentContainerStyle={styles.content}
+    >
+      <View style={styles.hero}>
+        <View
+          style={[styles.heroIcon, { backgroundColor: palette.primarySurface }]}
+        >
+          <Ionicons name="sparkles-outline" size={30} color={Colors.primary} />
+        </View>
+        <Text style={[styles.title, { color: palette.text }]}>
+          Discover StyLnk
+        </Text>
+        <Text style={[styles.subtitle, { color: palette.textSecondary }]}>
+          A quick snapshot of where the app is now and the most useful next
+          product steps.
+        </Text>
+      </View>
+
+      {sections.map((section) => (
+        <View
+          key={section.title}
+          style={[
+            styles.card,
+            { backgroundColor: palette.card, borderColor: palette.border },
+          ]}
+        >
+          <Text style={[styles.cardTitle, { color: palette.text }]}>
+            {section.title}
+          </Text>
+          <View style={styles.list}>
+            {section.items.map((item) => (
+              <View key={item} style={styles.listItem}>
+                <Ionicons
+                  name="checkmark-circle-outline"
+                  size={18}
+                  color={Colors.primary}
+                />
+                <Text style={[styles.listText, { color: palette.text }]}>
+                  {item}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      ))}
+
+      <Link href="/modal" asChild>
+        <TouchableOpacity style={styles.cta} activeOpacity={0.85}>
+          <Ionicons
+            name="information-circle-outline"
+            size={18}
+            color={Colors.white}
+          />
+          <Text style={styles.ctaText}>Open App Overview</Text>
+        </TouchableOpacity>
+      </Link>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  headerImage: {
-    color: '#808080',
-    bottom: -90,
-    left: -35,
-    position: 'absolute',
+  container: {
+    flex: 1,
   },
-  titleContainer: {
-    flexDirection: 'row',
-    gap: 8,
+  content: {
+    padding: Spacing.xl,
+    paddingBottom: Spacing.xxxl,
+    gap: Spacing.lg,
+  },
+  hero: {
+    paddingTop: Spacing.lg,
+    paddingBottom: Spacing.md,
+  },
+  heroIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: Spacing.md,
+  },
+  title: {
+    fontSize: Typography.fontSizes.xxxl,
+    fontWeight: Typography.fontWeights.bold,
+    marginBottom: Spacing.sm,
+  },
+  subtitle: {
+    fontSize: Typography.fontSizes.md,
+    lineHeight: 24,
+  },
+  card: {
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    padding: Spacing.lg,
+    ...Shadows.sm,
+  },
+  cardTitle: {
+    fontSize: Typography.fontSizes.lg,
+    fontWeight: Typography.fontWeights.semibold,
+    marginBottom: Spacing.md,
+  },
+  list: {
+    gap: Spacing.md,
+  },
+  listItem: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: Spacing.sm,
+  },
+  listText: {
+    flex: 1,
+    fontSize: Typography.fontSizes.md,
+    lineHeight: 22,
+  },
+  cta: {
+    marginTop: Spacing.sm,
+    backgroundColor: Colors.primary,
+    borderRadius: BorderRadius.md,
+    paddingVertical: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: Spacing.sm,
+  },
+  ctaText: {
+    color: Colors.white,
+    fontSize: Typography.fontSizes.md,
+    fontWeight: Typography.fontWeights.semibold,
   },
 });

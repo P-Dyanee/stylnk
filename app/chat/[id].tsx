@@ -6,6 +6,8 @@ import {
   Spacing,
   Typography,
 } from "@/constants/theme";
+import { authStorage, chatApi } from "@/src/services/api";
+import { useAppTheme } from "@/src/theme/app-theme";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
@@ -21,7 +23,6 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { authStorage, chatApi } from "@/src/services/api";
 
 type Message = {
   id: string;
@@ -32,59 +33,43 @@ type Message = {
 };
 
 const INITIAL_MESSAGES: Message[] = [
-  {
-    id: "1",
-    text: "Hey! Are you free later?",
-    isMine: false,
-    time: "10:40 AM",
-  },
-  {
-    id: "2",
-    text: "Yeah, what's up?",
-    isMine: true,
-    time: "10:41 AM",
-    status: "read",
-  },
-  {
-    id: "3",
-    text: "Let's grab coffee at 3pm?",
-    isMine: false,
-    time: "10:41 AM",
-  },
-  {
-    id: "4",
-    text: "Sounds good! Where?",
-    isMine: true,
-    time: "10:42 AM",
-    status: "read",
-  },
-  {
-    id: "5",
-    text: "Hey! Are you free later?",
-    isMine: false,
-    time: "10:42 AM",
-  },
+  { id: "1", text: "Hey! Are you free later?", isMine: false, time: "10:40 AM" },
+  { id: "2", text: "Yeah, what's up?", isMine: true, time: "10:41 AM", status: "read" },
+  { id: "3", text: "Let's grab coffee at 3pm?", isMine: false, time: "10:41 AM" },
+  { id: "4", text: "Sounds good! Where?", isMine: true, time: "10:42 AM", status: "read" },
+  { id: "5", text: "Hey! Are you free later?", isMine: false, time: "10:42 AM" },
 ];
 
-function MessageBubble({ message }: { message: Message }) {
+function MessageBubble({
+  message,
+  palette,
+}: {
+  message: Message;
+  palette: ReturnType<typeof useAppTheme>["palette"];
+}) {
   return (
     <View style={[styles.messageRow, message.isMine && styles.messageRowMine]}>
       <View
         style={[
           styles.bubble,
-          message.isMine ? styles.bubbleMine : styles.bubbleOther,
+          message.isMine
+            ? styles.bubbleMine
+            : [styles.bubbleOther, { backgroundColor: palette.surface }],
         ]}
       >
         <Text
-          style={[styles.messageText, message.isMine && styles.messageTextMine]}
+          style={[
+            styles.messageText,
+            { color: message.isMine ? Colors.white : palette.text },
+          ]}
         >
           {message.text}
         </Text>
       </View>
-      <View
-        style={[styles.messageMeta, message.isMine && styles.messageMetaMine]}
-      >
-        <Text style={styles.messageTime}>{message.time}</Text>
+      <View style={[styles.messageMeta, message.isMine && styles.messageMetaMine]}>
+        <Text style={[styles.messageTime, { color: palette.textMuted }]}>
+          {message.time}
+        </Text>
         {message.isMine && message.status === "read" && (
           <Ionicons
             name="checkmark-done"
@@ -100,6 +85,7 @@ function MessageBubble({ message }: { message: Message }) {
 
 export default function ChatScreen() {
   const router = useRouter();
+  const { palette } = useAppTheme();
   const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
   const chat = MOCK_CHATS.find((c) => c.id === id);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -130,7 +116,7 @@ export default function ChatScreen() {
         setMessages(INITIAL_MESSAGES);
       }
     };
-    loadData();
+    void loadData();
   }, [id]);
 
   const sendMessage = async () => {
@@ -167,7 +153,7 @@ export default function ChatScreen() {
         ),
       );
     } catch {
-      // Leave optimistic message in place to keep UX responsive.
+      // Keep optimistic message.
     }
   };
 
@@ -178,48 +164,58 @@ export default function ChatScreen() {
     .join("");
 
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor={Colors.background} />
+    <SafeAreaView style={[styles.container, { backgroundColor: palette.background }]}>
+      <StatusBar
+        barStyle={palette.statusBar === "dark" ? "light-content" : "dark-content"}
+        backgroundColor={palette.background}
+      />
 
-      {/* Header */}
-      <View style={styles.header}>
+      <View
+        style={[
+          styles.header,
+          {
+            borderBottomColor: palette.border,
+            backgroundColor: palette.card,
+          },
+        ]}
+      >
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="chevron-back" size={24} color={Colors.text} />
+          <Ionicons name="chevron-back" size={24} color={palette.text} />
         </TouchableOpacity>
         <View style={styles.headerCenter}>
           <View style={styles.avatarCircle}>
             <Text style={styles.avatarText}>{initials}</Text>
           </View>
           <View>
-            <Text style={styles.headerName}>{name ?? chat?.name ?? "Chat"}</Text>
+            <Text style={[styles.headerName, { color: palette.text }]}>
+              {name ?? chat?.name ?? "Chat"}
+            </Text>
             {chat?.isOnline && <Text style={styles.headerStatus}>Online</Text>}
           </View>
         </View>
         <View style={styles.headerActions}>
-          <TouchableOpacity style={styles.actionBtn}>
+          <TouchableOpacity
+            style={[styles.actionBtn, { backgroundColor: palette.primarySurface }]}
+          >
             <Ionicons name="call-outline" size={20} color={Colors.primary} />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.actionBtn}>
-            <Ionicons
-              name="videocam-outline"
-              size={20}
-              color={Colors.primary}
-            />
+          <TouchableOpacity
+            style={[styles.actionBtn, { backgroundColor: palette.primarySurface }]}
+          >
+            <Ionicons name="videocam-outline" size={20} color={Colors.primary} />
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* Messages */}
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={0}
       >
         <FlatList
           ref={flatListRef}
           data={messages}
           keyExtractor={(item) => item.id}
-          renderItem={({ item }) => <MessageBubble message={item} />}
+          renderItem={({ item }) => <MessageBubble message={item} palette={palette} />}
           contentContainerStyle={styles.messagesList}
           showsVerticalScrollIndicator={false}
           onContentSizeChange={() =>
@@ -227,15 +223,31 @@ export default function ChatScreen() {
           }
         />
 
-        {/* Input Bar */}
-        <View style={styles.inputBar}>
-          <TouchableOpacity style={styles.attachBtn}>
+        <View
+          style={[
+            styles.inputBar,
+            {
+              borderTopColor: palette.border,
+              backgroundColor: palette.card,
+            },
+          ]}
+        >
+          <TouchableOpacity
+            style={[styles.attachBtn, { backgroundColor: palette.primarySurface }]}
+          >
             <Ionicons name="add" size={22} color={Colors.primary} />
           </TouchableOpacity>
           <TextInput
-            style={styles.input}
+            style={[
+              styles.input,
+              {
+                backgroundColor: palette.surface,
+                color: palette.text,
+                borderColor: palette.border,
+              },
+            ]}
             placeholder="Type a message..."
-            placeholderTextColor={Colors.textMuted}
+            placeholderTextColor={palette.textMuted}
             value={input}
             onChangeText={setInput}
             multiline
@@ -246,7 +258,9 @@ export default function ChatScreen() {
               <Ionicons name="send" size={18} color={Colors.white} />
             </TouchableOpacity>
           ) : (
-            <TouchableOpacity style={styles.micBtn}>
+            <TouchableOpacity
+              style={[styles.micBtn, { backgroundColor: palette.primarySurface }]}
+            >
               <Ionicons name="mic-outline" size={22} color={Colors.primary} />
             </TouchableOpacity>
           )}
@@ -257,7 +271,7 @@ export default function ChatScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.background },
+  container: { flex: 1 },
   flex: { flex: 1 },
   header: {
     flexDirection: "row",
@@ -265,8 +279,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.lg,
     paddingVertical: Spacing.md,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-    backgroundColor: Colors.white,
   },
   backBtn: {
     width: 36,
@@ -297,7 +309,6 @@ const styles = StyleSheet.create({
   headerName: {
     fontSize: Typography.fontSizes.md,
     fontWeight: Typography.fontWeights.semibold,
-    color: Colors.text,
   },
   headerStatus: { fontSize: Typography.fontSizes.xs, color: Colors.online },
   headerActions: { flexDirection: "row", gap: 4 },
@@ -305,13 +316,12 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: BorderRadius.full,
-    backgroundColor: Colors.primarySurface,
     alignItems: "center",
     justifyContent: "center",
   },
   messagesList: {
     paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
+    paddingVertical: Spacing.lg,
     gap: Spacing.sm,
   },
   messageRow: {
@@ -322,11 +332,10 @@ const styles = StyleSheet.create({
   bubble: {
     maxWidth: "78%",
     paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.sm,
+    paddingVertical: 10,
     borderRadius: 18,
   },
   bubbleOther: {
-    backgroundColor: Colors.surface,
     borderBottomLeftRadius: 4,
   },
   bubbleMine: {
@@ -335,10 +344,8 @@ const styles = StyleSheet.create({
   },
   messageText: {
     fontSize: Typography.fontSizes.md,
-    color: Colors.text,
-    lineHeight: 22,
+    lineHeight: 23,
   },
-  messageTextMine: { color: Colors.white },
   messageMeta: {
     flexDirection: "row",
     alignItems: "center",
@@ -346,37 +353,31 @@ const styles = StyleSheet.create({
     marginHorizontal: 4,
   },
   messageMetaMine: { justifyContent: "flex-end" },
-  messageTime: { fontSize: Typography.fontSizes.xs, color: Colors.textMuted },
+  messageTime: { fontSize: Typography.fontSizes.xs },
   inputBar: {
     flexDirection: "row",
     alignItems: "flex-end",
     paddingHorizontal: Spacing.lg,
     paddingVertical: Spacing.md,
     borderTopWidth: 1,
-    borderTopColor: Colors.border,
-    backgroundColor: Colors.white,
     gap: Spacing.sm,
   },
   attachBtn: {
     width: 38,
     height: 38,
     borderRadius: BorderRadius.full,
-    backgroundColor: Colors.primarySurface,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 1,
   },
   input: {
     flex: 1,
-    backgroundColor: Colors.surface,
     borderRadius: 20,
     paddingHorizontal: Spacing.lg,
-    paddingVertical: Platform.OS === "ios" ? 10 : 8,
+    paddingVertical: Platform.OS === "ios" ? 11 : 9,
     fontSize: Typography.fontSizes.md,
-    color: Colors.text,
     maxHeight: 100,
     borderWidth: 1,
-    borderColor: Colors.border,
   },
   sendBtn: {
     width: 38,
@@ -392,7 +393,6 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: BorderRadius.full,
-    backgroundColor: Colors.primarySurface,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 1,

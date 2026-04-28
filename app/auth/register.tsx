@@ -1,3 +1,5 @@
+import { authApi } from "@/src/services/api";
+import { useAppTheme } from "@/src/theme/app-theme";
 import { useRouter } from "expo-router";
 import React, { useState } from "react";
 import {
@@ -13,10 +15,10 @@ import {
   View,
 } from "react-native";
 import { Colors } from "../../constants/theme";
-import { authApi } from "@/src/services/api";
 
 export default function RegisterScreen() {
   const router = useRouter();
+  const { palette } = useAppTheme();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -45,69 +47,63 @@ export default function RegisterScreen() {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-    >
+    <KeyboardAvoidingView style={[styles.container, { backgroundColor: palette.background }]} behavior={Platform.OS === "ios" ? "padding" : "height"}>
       <ScrollView
+        style={{ backgroundColor: palette.background }}
         contentContainerStyle={styles.scroll}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity
-            onPress={() => router.back()}
-            style={styles.backButton}
-          >
+          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
             <Text style={styles.backText}>← Back</Text>
           </TouchableOpacity>
-          <Text style={styles.title}>Create Account</Text>
-          <Text style={styles.subtitle}>Join STYLNK today</Text>
+          <Text style={[styles.title, { color: palette.text }]}>Create Account</Text>
+          <Text style={[styles.subtitle, { color: palette.textSecondary }]}>
+            Join STYLNK today
+          </Text>
         </View>
 
-        {/* Form */}
         <View style={styles.form}>
-          <Text style={styles.label}>Full Name</Text>
+          <Text style={[styles.label, { color: palette.text }]}>Full Name</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, { backgroundColor: palette.elevated, color: palette.text, borderColor: palette.border }]}
             placeholder="Enter your full name"
-            placeholderTextColor={Colors.light.subtext}
+            placeholderTextColor={palette.textMuted}
             value={name}
             onChangeText={setName}
           />
 
-          <Text style={styles.label}>Email</Text>
+          <Text style={[styles.label, { color: palette.text }]}>Email</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, { backgroundColor: palette.elevated, color: palette.text, borderColor: palette.border }]}
             placeholder="Enter your email"
-            placeholderTextColor={Colors.light.subtext}
+            placeholderTextColor={palette.textMuted}
             value={email}
             onChangeText={setEmail}
             keyboardType="email-address"
             autoCapitalize="none"
           />
 
-          <Text style={styles.label}>Password</Text>
+          <Text style={[styles.label, { color: palette.text }]}>Password</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, { backgroundColor: palette.elevated, color: palette.text, borderColor: palette.border }]}
             placeholder="Create a password"
-            placeholderTextColor={Colors.light.subtext}
+            placeholderTextColor={palette.textMuted}
             value={password}
             onChangeText={setPassword}
             secureTextEntry
           />
 
-          <Text style={styles.label}>Confirm Password</Text>
+          <Text style={[styles.label, { color: palette.text }]}>Confirm Password</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, { backgroundColor: palette.elevated, color: palette.text, borderColor: palette.border }]}
             placeholder="Confirm your password"
-            placeholderTextColor={Colors.light.subtext}
+            placeholderTextColor={palette.textMuted}
             value={confirmPassword}
             onChangeText={setConfirmPassword}
             secureTextEntry
           />
 
-          {/* Register Button */}
           <TouchableOpacity
             style={[styles.button, loading && styles.buttonDisabled]}
             onPress={handleRegister}
@@ -120,12 +116,11 @@ export default function RegisterScreen() {
             )}
           </TouchableOpacity>
 
-          {/* Login Link */}
           <TouchableOpacity
             style={styles.loginLink}
             onPress={() => router.push("/auth/login")}
           >
-            <Text style={styles.loginText}>
+            <Text style={[styles.loginText, { color: palette.textSecondary }]}>
               Already have an account?{" "}
               <Text style={styles.loginHighlight}>Log In</Text>
             </Text>
@@ -137,40 +132,36 @@ export default function RegisterScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.light.background },
+  container: { flex: 1 },
   scroll: { flexGrow: 1, padding: 24 },
   header: { marginBottom: 32, marginTop: 20 },
   backButton: { marginBottom: 16 },
   backText: { color: Colors.primary, fontSize: 16 },
-  title: { fontSize: 28, fontWeight: "bold", color: Colors.light.text },
-  subtitle: { fontSize: 14, color: Colors.light.subtext, marginTop: 4 },
+  title: { fontSize: 28, fontWeight: "bold" },
+  subtitle: { fontSize: 14, marginTop: 4 },
   form: { width: "100%" },
   label: {
     fontSize: 14,
     fontWeight: "600",
-    color: Colors.light.text,
     marginBottom: 6,
   },
   input: {
-    backgroundColor: Colors.light.card,
     borderRadius: 12,
     padding: 14,
     fontSize: 15,
-    color: Colors.light.text,
     borderWidth: 1,
-    borderColor: Colors.light.border,
     marginBottom: 16,
   },
   button: {
     backgroundColor: Colors.primary,
     borderRadius: 12,
-    padding: 16,
+    padding: 17,
     alignItems: "center",
     marginTop: 8,
   },
   buttonDisabled: { opacity: 0.7 },
   buttonText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
   loginLink: { alignItems: "center", marginTop: 24 },
-  loginText: { fontSize: 14, color: Colors.light.subtext },
+  loginText: { fontSize: 14 },
   loginHighlight: { color: Colors.primary, fontWeight: "bold" },
 });

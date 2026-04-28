@@ -3,6 +3,8 @@ import Constants from "expo-constants";
 import { Platform } from "react-native";
 
 const TOKEN_KEY = "stylnk_auth_token";
+const USER_ID_KEY = "stylnk_user_id";
+const USER_KEY = "stylnk_auth_user";
 
 const getHostFromExpo = () => {
   const candidates = [
@@ -41,6 +43,7 @@ export type AuthUser = {
   id: string;
   fullName: string;
   email: string;
+  avatarUrl?: string | null;
 };
 
 type AuthResponse = {
@@ -64,6 +67,27 @@ export type ChatMessage = {
   senderId: string;
   senderName?: string;
   createdAt: string;
+};
+
+export type GroupListItem = {
+  id: string;
+  name: string;
+  description: string;
+  memberCount: number;
+  lastMessage: string;
+  time: string;
+  unreadCount: number;
+};
+
+export type DirectoryUser = {
+  id: string;
+  fullName: string;
+  email: string;
+};
+
+export type DirectChatResult = {
+  id: string;
+  name: string;
 };
 
 const request = async <T>(
@@ -119,8 +143,7 @@ export const authApi = {
       },
       false,
     );
-    await AsyncStorage.setItem(TOKEN_KEY, data.token);
-    await AsyncStorage.setItem("stylnk_user_id", data.user.id);
+    await authStorage.saveSession(data);
     return data.user;
   },
   async login(input: { email: string; password: string }) {
@@ -132,9 +155,20 @@ export const authApi = {
       },
       false,
     );
-    await AsyncStorage.setItem(TOKEN_KEY, data.token);
-    await AsyncStorage.setItem("stylnk_user_id", data.user.id);
+    await authStorage.saveSession(data);
     return data.user;
+  },
+  async uploadAvatar(avatarUrl: string) {
+    const data = await request<{ user: AuthUser }>(
+      "/me/avatar",
+      {
+        method: "PATCH",
+        body: JSON.stringify({ avatarUrl }),
+      },
+      true,
+    );
+    const currentUser = await authStorage.updateCurrentUser(data.user);
+    return currentUser ?? data.user;
   },
 };
 
@@ -157,8 +191,73 @@ export const chatApi = {
   },
 };
 
+export const groupApi = {
+  listGroups() {
+    return request<GroupListItem[]>("/groups", {}, true);
+  },
+};
+
+export const userApi = {
+  listUsers() {
+    return request<DirectoryUser[]>("/users", {}, true);
+  },
+};
+
+export const composeApi = {
+  startDirectChat(recipientId: string) {
+    return request<DirectChatResult>(
+      "/chats/direct",
+      {
+        method: "POST",
+        body: JSON.stringify({ recipientId }),
+      },
+      true,
+    );
+  },
+};
+
 export const authStorage = {
+  async saveSession(data: AuthResponse) {
+    await AsyncStorage.multiSet([
+      [TOKEN_KEY, data.token],
+      [USER_ID_KEY, data.user.id],
+      [USER_KEY, JSON.stringify(data.user)],
+    ]);
+  },
+  async hasSession() {
+    const token = await AsyncStorage.getItem(TOKEN_KEY);
+    return Boolean(token);
+  },
   async getCurrentUserId() {
-    return AsyncStorage.getItem("stylnk_user_id");
+    return AsyncStorage.getItem(USER_ID_KEY);
+  },
+  async getCurrentUser() {
+    const value = await AsyncStorage.getItem(USER_KEY);
+    if (!value) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(value) as AuthUser;
+    } catch {
+      await AsyncStorage.removeItem(USER_KEY);
+      return null;
+    }
+  },
+  async updateCurrentUser(updates: Partial<AuthUser>) {
+    const currentUser = await authStorage.getCurrentUser();
+    if (!currentUser) {
+      return null;
+    }
+
+    const nextUser = { ...currentUser, ...updates };
+    await AsyncStorage.multiSet([
+      [USER_ID_KEY, nextUser.id],
+      [USER_KEY, JSON.stringify(nextUser)],
+    ]);
+    return nextUser;
+  },
+  async clearSession() {
+    await AsyncStorage.multiRemove([TOKEN_KEY, USER_ID_KEY, USER_KEY]);
   },
 };

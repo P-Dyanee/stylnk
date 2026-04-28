@@ -1,3 +1,4 @@
+import { useAppTheme } from "@/src/theme/app-theme";
 import { useRouter } from "expo-router";
 import React from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
@@ -11,7 +12,49 @@ type Props = {
   unread: number;
   online: boolean;
   avatar: string;
+  searchQuery?: string;
 };
+
+function HighlightedText({
+  value,
+  query,
+  baseStyle,
+}: {
+  value: string;
+  query?: string;
+  baseStyle: object | object[];
+}) {
+  const normalizedQuery = query?.trim().toLowerCase();
+
+  if (!normalizedQuery) {
+    return (
+      <Text style={baseStyle} numberOfLines={1}>
+        {value}
+      </Text>
+    );
+  }
+
+  const matchIndex = value.toLowerCase().indexOf(normalizedQuery);
+  if (matchIndex === -1) {
+    return (
+      <Text style={baseStyle} numberOfLines={1}>
+        {value}
+      </Text>
+    );
+  }
+
+  const before = value.slice(0, matchIndex);
+  const match = value.slice(matchIndex, matchIndex + normalizedQuery.length);
+  const after = value.slice(matchIndex + normalizedQuery.length);
+
+  return (
+    <Text style={baseStyle} numberOfLines={1}>
+      {before}
+      <Text style={styles.highlight}>{match}</Text>
+      {after}
+    </Text>
+  );
+}
 
 export default function ConversationItem({
   id,
@@ -21,35 +64,57 @@ export default function ConversationItem({
   unread,
   online,
   avatar,
+  searchQuery,
 }: Props) {
   const router = useRouter();
+  const { palette } = useAppTheme();
 
   return (
     <TouchableOpacity
-      style={styles.container}
-      onPress={() => router.push(`/chat/${id}`)}
+      style={[
+        styles.container,
+        {
+          backgroundColor: palette.background,
+          borderBottomColor: palette.border,
+        },
+      ]}
+      onPress={() =>
+        router.push({
+          pathname: "/chat/[id]",
+          params: { id, name },
+        })
+      }
       activeOpacity={0.7}
     >
-      {/* Avatar */}
       <View style={styles.avatarWrapper}>
         <View style={styles.avatar}>
           <Text style={styles.avatarText}>{avatar}</Text>
         </View>
-        {online && <View style={styles.onlineDot} />}
+        {online && (
+          <View
+            style={[
+              styles.onlineDot,
+              { borderColor: palette.background },
+            ]}
+          />
+        )}
       </View>
 
-      {/* Message Info */}
       <View style={styles.info}>
         <View style={styles.topRow}>
-          <Text style={styles.name} numberOfLines={1}>
-            {name}
-          </Text>
-          <Text style={styles.time}>{time}</Text>
+          <HighlightedText
+            value={name}
+            query={searchQuery}
+            baseStyle={[styles.name, { color: palette.text }]}
+          />
+          <Text style={[styles.time, { color: palette.textSecondary }]}>{time}</Text>
         </View>
         <View style={styles.bottomRow}>
-          <Text style={styles.lastMessage} numberOfLines={1}>
-            {lastMessage}
-          </Text>
+          <HighlightedText
+            value={lastMessage}
+            query={searchQuery}
+            baseStyle={[styles.lastMessage, { color: palette.textSecondary }]}
+          />
           {unread > 0 && (
             <View style={styles.badge}>
               <Text style={styles.badgeText}>
@@ -68,10 +133,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: Colors.light.background,
+    paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.light.border,
   },
   avatarWrapper: {
     position: "relative",
@@ -99,7 +162,6 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     backgroundColor: Colors.online,
     borderWidth: 2,
-    borderColor: Colors.light.background,
   },
   info: {
     flex: 1,
@@ -107,18 +169,16 @@ const styles = StyleSheet.create({
   topRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: 4,
+    marginBottom: 5,
   },
   name: {
     fontSize: 16,
     fontWeight: "600",
-    color: Colors.light.text,
     flex: 1,
     marginRight: 8,
   },
   time: {
     fontSize: 12,
-    color: Colors.light.subtext,
   },
   bottomRow: {
     flexDirection: "row",
@@ -127,9 +187,9 @@ const styles = StyleSheet.create({
   },
   lastMessage: {
     fontSize: 14,
-    color: Colors.light.subtext,
     flex: 1,
     marginRight: 8,
+    lineHeight: 19,
   },
   badge: {
     backgroundColor: Colors.primary,
@@ -144,5 +204,9 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 11,
     fontWeight: "bold",
+  },
+  highlight: {
+    color: Colors.primary,
+    fontWeight: "700",
   },
 });
