@@ -1,8 +1,7 @@
+import { AppThemeProvider, useAppTheme } from "@/src/theme/app-theme";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { Colors } from "../constants/theme";
-import { AppThemeProvider, useAppTheme } from "@/src/theme/app-theme";
-import ThemeToggle from "@/components/ThemeToggle";
 
 function RootNavigator() {
   const { palette } = useAppTheme();
@@ -47,7 +46,6 @@ function RootNavigator() {
           }}
         />
       </Stack>
-      <ThemeToggle />
     </>
   );
 }

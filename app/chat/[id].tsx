@@ -1,10 +1,10 @@
 import { MOCK_CHATS } from "@/constants/mockData";
 import {
-  BorderRadius,
-  Colors,
-  Shadows,
-  Spacing,
-  Typography,
+    BorderRadius,
+    Colors,
+    Shadows,
+    Spacing,
+    Typography,
 } from "@/constants/theme";
 import { authStorage, chatApi } from "@/src/services/api";
 import { useAppTheme } from "@/src/theme/app-theme";
@@ -12,16 +12,16 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
-  FlatList,
-  KeyboardAvoidingView,
-  Platform,
-  SafeAreaView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    FlatList,
+    KeyboardAvoidingView,
+    Platform,
+    SafeAreaView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 
 type Message = {
@@ -30,15 +30,24 @@ type Message = {
   isMine: boolean;
   time: string;
   status?: "sent" | "delivered" | "read";
+  date?: string;
 };
 
 const INITIAL_MESSAGES: Message[] = [
-  { id: "1", text: "Hey! Are you free later?", isMine: false, time: "10:40 AM" },
-  { id: "2", text: "Yeah, what's up?", isMine: true, time: "10:41 AM", status: "read" },
-  { id: "3", text: "Let's grab coffee at 3pm?", isMine: false, time: "10:41 AM" },
-  { id: "4", text: "Sounds good! Where?", isMine: true, time: "10:42 AM", status: "read" },
-  { id: "5", text: "Hey! Are you free later?", isMine: false, time: "10:42 AM" },
+  { id: "1", text: "Hey! Are you free later?", isMine: false, time: "10:40 AM", date: "Today" },
+  { id: "2", text: "Yeah, what's up?", isMine: true, time: "10:41 AM", status: "read", date: "Today" },
+  { id: "3", text: "Let's grab coffee at 3pm?", isMine: false, time: "10:41 AM", date: "Today" },
+  { id: "4", text: "Sounds good! Where?", isMine: true, time: "10:42 AM", status: "read", date: "Today" },
+  { id: "5", text: "Hey! Are you free later?", isMine: false, time: "10:42 AM", date: "Today" },
 ];
+
+function DateSeparator({ date }: { date: string }) {
+  return (
+    <View style={styles.dateSeparator}>
+      <Text style={styles.dateText}>{date}</Text>
+    </View>
+  );
+}
 
 function MessageBubble({
   message,
@@ -67,14 +76,14 @@ function MessageBubble({
         </Text>
       </View>
       <View style={[styles.messageMeta, message.isMine && styles.messageMetaMine]}>
-        <Text style={[styles.messageTime, { color: palette.textMuted }]}>
+        <Text style={[styles.messageTime, { color: message.isMine ? Colors.white : palette.textMuted }]}>
           {message.time}
         </Text>
-        {message.isMine && message.status === "read" && (
+        {message.isMine && (
           <Ionicons
             name="checkmark-done"
             size={12}
-            color={Colors.primary}
+            color={message.isMine ? Colors.white : Colors.primary}
             style={{ marginLeft: 3 }}
           />
         )}
@@ -215,7 +224,15 @@ export default function ChatScreen() {
           ref={flatListRef}
           data={messages}
           keyExtractor={(item) => item.id}
-          renderItem={({ item }) => <MessageBubble message={item} palette={palette} />}
+          renderItem={({ item, index }) => {
+            const showDateSeparator = index === 0 || messages[index - 1]?.date !== item.date;
+            return (
+              <>
+                {showDateSeparator && item.date && <DateSeparator date={item.date} />}
+                <MessageBubble message={item} palette={palette} />
+              </>
+            );
+          }}
           contentContainerStyle={styles.messagesList}
           showsVerticalScrollIndicator={false}
           onContentSizeChange={() =>
@@ -235,7 +252,7 @@ export default function ChatScreen() {
           <TouchableOpacity
             style={[styles.attachBtn, { backgroundColor: palette.primarySurface }]}
           >
-            <Ionicons name="add" size={22} color={Colors.primary} />
+            <Ionicons name="attach" size={22} color={Colors.primary} />
           </TouchableOpacity>
           <TextInput
             style={[
@@ -246,7 +263,7 @@ export default function ChatScreen() {
                 borderColor: palette.border,
               },
             ]}
-            placeholder="Type a message..."
+            placeholder="Type your message..."
             placeholderTextColor={palette.textMuted}
             value={input}
             onChangeText={setInput}
@@ -396,5 +413,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 1,
+  },
+  dateSeparator: {
+    alignItems: "center",
+    marginVertical: 16,
+  },
+  dateText: {
+    fontSize: 12,
+    color: Colors.primary,
+    backgroundColor: "#f0f0f0",
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    fontWeight: "600",
   },
 });

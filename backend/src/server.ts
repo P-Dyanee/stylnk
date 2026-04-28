@@ -1,8 +1,8 @@
-import "dotenv/config";
-import cors from "cors";
-import express from "express";
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import cors from "cors";
+import "dotenv/config";
+import express from "express";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
 
@@ -37,8 +37,22 @@ const toTime = (date: Date) =>
 const asParam = (value: string | string[] | undefined) =>
   Array.isArray(value) ? value[0] : value;
 
-app.get("/health", (_req, res) => {
-  res.json({ status: "ok" });
+app.get("/health", async (_req, res) => {
+  try {
+    // Test database connection
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ 
+      status: "ok", 
+      database: "connected",
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      status: "error", 
+      database: "disconnected",
+      error: error instanceof Error ? error.message : "Unknown error"
+    });
+  }
 });
 
 app.post("/auth/register", async (req, res) => {
@@ -135,11 +149,13 @@ app.post("/auth/login", async (req, res) => {
 });
 
 app.patch("/me/avatar", auth, async (req: AuthRequest, res) => {
+  console.log("Avatar upload request received for user:", req.userId);
+  
   const schema = z.object({
     avatarUrl: z
       .string()
       .min(1)
-      .max(5_000_000)
+      .max(10_000_000) // 10MB limit to accommodate base64
       .refine(
         (value) =>
           value.startsWith("data:image/jpeg;base64,") ||
@@ -152,26 +168,39 @@ app.patch("/me/avatar", auth, async (req: AuthRequest, res) => {
 
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
-    return res.status(400).json({ message: "Invalid avatar payload" });
+    console.log("Avatar validation failed:", parsed.error);
+    return res.status(400).json({ message: "Invalid avatar payload", error: parsed.error });
   }
 
-  const updatedUser = await prisma.user.update({
-    where: { id: req.userId! },
-    data: { avatarUrl: parsed.data.avatarUrl },
-  });
+  try {
+    console.log("Updating avatar for user:", req.userId);
+    const updatedUser = await prisma.user.update({
+      where: { id: req.userId! },
+      data: { avatarUrl: parsed.data.avatarUrl },
+    });
 
-  res.json({
-    user: {
-      id: updatedUser.id,
-      fullName: updatedUser.fullName,
-      email: updatedUser.email,
-      avatarUrl: updatedUser.avatarUrl,
-    },
-  });
+    console.log("Avatar updated successfully for user:", req.userId);
+    res.json({
+      user: {
+        id: updatedUser.id,
+        fullName: updatedUser.fullName,
+        email: updatedUser.email,
+        avatarUrl: updatedUser.avatarUrl,
+      },
+    });
+  } catch (error) {
+    console.error("Database update error:", error);
+    res.status(500).json({ 
+      message: "Failed to update avatar in database", 
+      error: error instanceof Error ? error.message : "Unknown error" 
+    });
+  }
 });
 
 app.get("/users", auth, async (req: AuthRequest, res) => {
   const currentUserId = req.userId!;
+  console.log("Fetching users for:", currentUserId);
+  
   const users = await prisma.user.findMany({
     where: {
       id: { not: currentUserId },
@@ -181,9 +210,11 @@ app.get("/users", auth, async (req: AuthRequest, res) => {
       id: true,
       fullName: true,
       email: true,
+      avatarUrl: true,
     },
   });
 
+  console.log(`Found ${users.length} users`);
   res.json(users);
 });
 

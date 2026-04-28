@@ -1,29 +1,29 @@
 import {
-  BorderRadius,
-  Colors,
-  Shadows,
-  Spacing,
-  Typography,
+    BorderRadius,
+    Colors,
+    Shadows,
+    Spacing,
+    Typography,
 } from "@/constants/theme";
-import { Image } from "expo-image";
-import * as ImagePicker from "expo-image-picker";
+import { authApi, authStorage, type AuthUser } from "@/src/services/api";
 import { preferencesStorage } from "@/src/services/preferences";
 import { useAppTheme } from "@/src/theme/app-theme";
 import { Ionicons } from "@expo/vector-icons";
+import { Image } from "expo-image";
+import { useFocusEffect, useRouter } from "expo-router";
 import React from "react";
 import {
-  SafeAreaView,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Alert,
-  ActivityIndicator,
-  Text,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    SafeAreaView,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from "react-native";
-import { authApi, authStorage, type AuthUser } from "@/src/services/api";
-import { useFocusEffect, useRouter } from "expo-router";
+import { ImageUploadHelper } from "../../utils/imageUpload";
 
 type SettingItem = {
   icon: string;
@@ -138,47 +138,39 @@ export default function ProfileScreen() {
   };
 
   const handlePickAvatar = async () => {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert(
-        "Permission needed",
-        "Please allow photo library access to upload a profile picture.",
-      );
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"],
+    const image = await ImageUploadHelper.pickImage({
       allowsEditing: true,
       aspect: [1, 1],
-      quality: 0.8,
-      base64: true,
+      quality: 0.6, // Reduced quality for faster upload
+      maxSizeMB: 2, // Reduced to 2MB for much faster uploads
     });
 
-    if (result.canceled || !result.assets[0]?.uri || !result.assets[0]?.base64) {
-      return;
+    if (!image) {
+      return; // User cancelled or error occurred (helper shows alerts)
     }
 
-    const uri = result.assets[0].uri;
-    const mimeType = result.assets[0].mimeType || "image/jpeg";
-    const dataUrl = `data:${mimeType};base64,${result.assets[0].base64}`;
-
-    setAvatarUri(uri);
+    const dataUrl = ImageUploadHelper.createDataUrl(image);
+    setAvatarUri(image.uri);
     setUploadingAvatar(true);
 
     try {
+      console.log("Starting avatar upload...");
       const updatedUser = await authApi.uploadAvatar(dataUrl);
+      console.log("Avatar upload successful:", updatedUser);
       setUser(updatedUser);
-      setAvatarUri(updatedUser.avatarUrl || uri);
+      setAvatarUri(updatedUser.avatarUrl || image.uri);
       const profileExtras = await preferencesStorage.getProfileExtras();
       await preferencesStorage.saveProfileExtras({
         ...profileExtras,
-        avatarUri: updatedUser.avatarUrl || uri,
+        avatarUri: updatedUser.avatarUrl || image.uri,
       });
+      Alert.alert("Success", "Profile picture updated successfully!");
     } catch (error) {
       setAvatarUri(user?.avatarUrl || "");
-      const message = error instanceof Error ? error.message : "Please try again.";
-      Alert.alert("Upload failed", message);
+      console.error("Upload error:", error);
+      const message = error instanceof Error ? error.message : "Upload failed. Please try again.";
+      console.error("Detailed error:", message);
+      Alert.alert("Upload failed", `${message}\n\nPlease check your network connection and try again.`);
     } finally {
       setUploadingAvatar(false);
     }
@@ -215,23 +207,26 @@ export default function ProfileScreen() {
       >
         {/* Header */}
         <View style={styles.header}>
-          <Text style={[styles.headerTitle, { color: palette.text }]}>Profile</Text>
-          <TouchableOpacity style={[styles.headerButton, { backgroundColor: palette.primarySurface }]}>
+          <View style={styles.headerSpacer} />
+          <TouchableOpacity 
+            style={[styles.headerButton, { backgroundColor: palette.card }]} 
+            onPress={() => router.push("/modal")}
+          >
             <Ionicons
               name="settings-outline"
               size={22}
-              color={Colors.primary}
+              color={palette.text}
             />
           </TouchableOpacity>
         </View>
 
         {/* Profile Card */}
-        <View style={styles.profileCard}>
+        <View style={[styles.profileCard, { backgroundColor: palette.card }]}>
           <View style={styles.avatarWrapper}>
             {avatarUri ? (
               <Image source={{ uri: avatarUri }} style={styles.avatarCircle} contentFit="cover" />
             ) : (
-              <View style={styles.avatarCircle}>
+              <View style={[styles.avatarCircle, { backgroundColor: Colors.primary }]}>
                 <Text style={styles.avatarText}>{initials}</Text>
               </View>
             )}
@@ -247,85 +242,85 @@ export default function ProfileScreen() {
               )}
             </TouchableOpacity>
           </View>
-          <Text style={styles.profileName}>{user.fullName}</Text>
-          <Text style={[styles.profileHandle, { color: palette.textSecondary }]}>{handle}</Text>
-          <Text style={[styles.profileEmail, { color: palette.textMuted }]}>{user.email}</Text>
+          <Text style={[styles.profileName, { color: palette.text }]}>{user.fullName}</Text>
+          <Text style={[styles.profileEmail, { color: palette.textSecondary }]}>{user.email}</Text>
           <View style={styles.statusRow}>
-            <View style={styles.onlineDot} />
-            <Text style={styles.statusText}>Active now</Text>
+            <View style={[styles.onlineDot, { backgroundColor: Colors.primary }]} />
+            <Text style={[styles.statusText, { color: palette.textSecondary }]}>Active now</Text>
           </View>
         </View>
 
         {/* Stats Row */}
-        <View style={styles.statsRow}>
+        <View style={[styles.statsRow, { backgroundColor: palette.card }]}>
           {[
             { label: "Chats", value: "24" },
             { label: "Groups", value: "7" },
             { label: "Calls", value: "156" },
           ].map((stat) => (
-            <View key={stat.label} style={styles.statItem}>
-              <Text style={styles.statValue}>{stat.value}</Text>
+            <TouchableOpacity key={stat.label} style={styles.statItem}>
+              <Text style={[styles.statValue, { color: palette.text }]}>{stat.value}</Text>
               <Text style={[styles.statLabel, { color: palette.textSecondary }]}>{stat.label}</Text>
-            </View>
+            </TouchableOpacity>
           ))}
         </View>
 
-        {/* Settings Sections */}
-        {SETTINGS.map((section) => (
-          <View key={section.section} style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: palette.textSecondary }]}>{section.section}</Text>
-            <View style={[styles.sectionCard, { backgroundColor: palette.card, borderColor: palette.border }]}>
-              {section.items.map((item, idx) => (
-                <React.Fragment key={item.label}>
-                  <TouchableOpacity
-                    style={styles.settingItem}
-                    activeOpacity={0.7}
-                    onPress={() => handleSettingPress(item.label)}
-                  >
-                    <View
-                      style={[
-                        styles.settingIcon,
-                        item.danger && styles.settingIconDanger,
-                      ]}
-                    >
-                      <Ionicons
-                        name={item.icon as any}
-                        size={18}
-                        color={item.danger ? Colors.danger : Colors.primary}
-                      />
-                    </View>
-                    <Text
-                      style={[
-                        styles.settingLabel,
-                        { color: palette.text },
-                        item.danger && styles.settingLabelDanger,
-                      ]}
-                    >
-                      {item.label}
+        {/* Menu Items */}
+        <View style={[styles.menuContainer, { backgroundColor: palette.card }]}>
+          {[
+            { icon: "person-outline", label: "Edit Profile" },
+            { icon: "lock-closed-outline", label: "Privacy" },
+            { icon: "notifications-outline", label: "Notifications" },
+            { icon: "shield-checkmark-outline", label: "Security" },
+            { icon: "color-palette-outline", label: "Appearance" },
+            { icon: "language-outline", label: "Language", value: "English" },
+            { icon: "chatbubble-outline", label: "Chat Settings" },
+            { icon: "help-circle-outline", label: "Help & FAQ" },
+            { icon: "information-circle-outline", label: "About StyLnk" },
+            { icon: "log-out-outline", label: "Log Out", danger: true },
+          ].map((item, idx) => (
+            <React.Fragment key={item.label}>
+              <TouchableOpacity
+                style={styles.menuItem}
+                activeOpacity={0.7}
+                onPress={() => handleSettingPress(item.label)}
+              >
+                <View style={[styles.menuIcon, { backgroundColor: palette.primarySurface }]}>
+                  <Ionicons
+                    name={item.icon as any}
+                    size={20}
+                    color={item.danger ? Colors.danger : Colors.primary}
+                  />
+                </View>
+                <Text
+                  style={[
+                    styles.menuLabel,
+                    { color: palette.text },
+                    item.danger && styles.menuLabelDanger,
+                  ]}
+                >
+                  {item.label}
+                </Text>
+                <View style={styles.menuRight}>
+                  {item.value && (
+                    <Text style={[styles.menuValue, { color: palette.textSecondary }]}>
+                      {item.label === "Language" ? languageLabel : item.value}
                     </Text>
-                    <View style={styles.settingRight}>
-                      {item.value && (
-                        <Text style={[styles.settingValue, { color: palette.textMuted }]}>
-                          {item.label === "Language" ? languageLabel : item.value}
-                        </Text>
-                      )}
-                      {!item.danger && (
-                        <Ionicons
-                          name="chevron-forward"
-                          size={16}
-                          color={palette.textMuted}
-                        />
-                      )}
-                    </View>
-                  </TouchableOpacity>
-                  {idx < section.items.length - 1 && (
-                    <View style={[styles.itemDivider, { backgroundColor: palette.divider }]} />
                   )}
-                </React.Fragment>
-              ))}
-            </View>
-          </View>
-        ))}
+                  {!item.danger && (
+                    <Ionicons
+                      name="chevron-forward"
+                      size={16}
+                      color={palette.textSecondary}
+                    />
+                  )}
+                </View>
+              </TouchableOpacity>
+              {idx < 9 && (
+                <View style={[styles.menuDivider, { backgroundColor: palette.border }]} />
+              )}
+            </React.Fragment>
+          ))}
+        </View>
 
         <Text style={[styles.versionText, { color: palette.textMuted }]}>StyLnk v1.0.0</Text>
       </ScrollView>
@@ -350,15 +345,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.xl,
     paddingVertical: Spacing.lg,
   },
-  headerTitle: {
-    fontSize: Typography.fontSizes.xxxl,
-    fontWeight: Typography.fontWeights.bold,
-    letterSpacing: -0.5,
+  headerSpacer: {
+    flex: 1,
   },
   headerButton: {
     width: 40,
     height: 40,
-    borderRadius: BorderRadius.full,
+    borderRadius: 20,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -366,13 +359,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: Spacing.xl,
     paddingHorizontal: Spacing.xl,
+    marginHorizontal: Spacing.xl,
+    borderRadius: BorderRadius.lg,
+    marginBottom: Spacing.lg,
   },
   avatarWrapper: { position: "relative", marginBottom: Spacing.lg },
   avatarCircle: {
     width: 88,
     height: 88,
     borderRadius: 44,
-    backgroundColor: Colors.primary,
     alignItems: "center",
     justifyContent: "center",
     ...Shadows.md,
@@ -398,17 +393,10 @@ const styles = StyleSheet.create({
   profileName: {
     fontSize: Typography.fontSizes.xl,
     fontWeight: Typography.fontWeights.bold,
-    color: Colors.text,
     marginBottom: 4,
-  },
-  profileHandle: {
-    fontSize: Typography.fontSizes.sm,
-    color: Colors.textSecondary,
-    marginBottom: 2,
   },
   profileEmail: {
     fontSize: Typography.fontSizes.sm,
-    color: Colors.textMuted,
     marginBottom: Spacing.sm,
   },
   statusRow: { flexDirection: "row", alignItems: "center", gap: 6 },
@@ -416,20 +404,17 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: Colors.online,
   },
   statusText: {
     fontSize: Typography.fontSizes.sm,
-    color: Colors.online,
     fontWeight: "500",
   },
   statsRow: {
     flexDirection: "row",
     marginHorizontal: Spacing.xl,
-    backgroundColor: Colors.primarySurface,
     borderRadius: BorderRadius.lg,
     paddingVertical: Spacing.lg,
-    marginBottom: Spacing.xl,
+    marginBottom: Spacing.lg,
   },
   statItem: {
     flex: 1,
@@ -446,44 +431,34 @@ const styles = StyleSheet.create({
     fontSize: Typography.fontSizes.xs,
     marginTop: 2,
   },
-  section: { marginBottom: Spacing.xl, paddingHorizontal: Spacing.xl },
-  sectionTitle: {
-    fontSize: Typography.fontSizes.sm,
-    fontWeight: Typography.fontWeights.semibold,
-    textTransform: "uppercase",
-    letterSpacing: 1,
-    marginBottom: Spacing.sm,
-  },
-  sectionCard: {
+  menuContainer: {
+    marginHorizontal: Spacing.xl,
     borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    overflow: "hidden",
+    marginBottom: Spacing.xl,
   },
-  settingItem: {
+  menuItem: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: Spacing.lg,
-    paddingVertical: 14,
+    paddingVertical: 16,
   },
-  settingIcon: {
-    width: 34,
-    height: 34,
+  menuIcon: {
+    width: 36,
+    height: 36,
     borderRadius: BorderRadius.sm,
-    backgroundColor: Colors.primarySurface,
     alignItems: "center",
     justifyContent: "center",
     marginRight: Spacing.md,
   },
-  settingIconDanger: { backgroundColor: "#FFF0F0" },
-  settingLabel: {
+  menuLabel: {
     flex: 1,
     fontSize: Typography.fontSizes.md,
     fontWeight: Typography.fontWeights.medium,
   },
-  settingLabelDanger: { color: Colors.danger },
-  settingRight: { flexDirection: "row", alignItems: "center", gap: 6 },
-  settingValue: { fontSize: Typography.fontSizes.sm },
-  itemDivider: { height: 1, marginLeft: 58 },
+  menuLabelDanger: { color: Colors.danger },
+  menuRight: { flexDirection: "row", alignItems: "center", gap: 6 },
+  menuValue: { fontSize: Typography.fontSizes.sm },
+  menuDivider: { height: 1, marginLeft: 60 },
   versionText: {
     textAlign: "center",
     fontSize: Typography.fontSizes.xs,

@@ -1,4 +1,5 @@
 import { useAppTheme } from "@/src/theme/app-theme";
+import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import React from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
@@ -13,6 +14,7 @@ type Props = {
   online: boolean;
   avatar: string;
   searchQuery?: string;
+  isTyping?: boolean;
 };
 
 function HighlightedText({
@@ -65,6 +67,7 @@ export default function ConversationItem({
   online,
   avatar,
   searchQuery,
+  isTyping = false,
 }: Props) {
   const router = useRouter();
   const { palette } = useAppTheme();
@@ -110,18 +113,27 @@ export default function ConversationItem({
           <Text style={[styles.time, { color: palette.textSecondary }]}>{time}</Text>
         </View>
         <View style={styles.bottomRow}>
-          <HighlightedText
-            value={lastMessage}
-            query={searchQuery}
-            baseStyle={[styles.lastMessage, { color: palette.textSecondary }]}
-          />
-          {unread > 0 && (
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>
-                {unread > 99 ? "99+" : unread}
-              </Text>
-            </View>
+          {isTyping ? (
+            <Text style={[styles.typingText, { color: Colors.primary }]}>Typing...</Text>
+          ) : (
+            <HighlightedText
+              value={lastMessage}
+              query={searchQuery}
+              baseStyle={[styles.lastMessage, { color: palette.textSecondary }]}
+            />
           )}
+          <View style={styles.bottomRowRight}>
+            {unread > 0 && (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>
+                  {unread > 99 ? "99+" : unread}
+                </Text>
+              </View>
+            )}
+            {unread === 0 && (
+              <Ionicons name="checkmark-done" size={16} color={Colors.primary} />
+            )}
+          </View>
         </View>
       </View>
     </TouchableOpacity>
@@ -133,17 +145,17 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
+    paddingVertical: 12,
+    borderBottomWidth: 0.5,
   },
   avatarWrapper: {
     position: "relative",
     marginRight: 12,
   },
   avatar: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     backgroundColor: Colors.primary,
     justifyContent: "center",
     alignItems: "center",
@@ -155,11 +167,11 @@ const styles = StyleSheet.create({
   },
   onlineDot: {
     position: "absolute",
-    bottom: 2,
-    right: 2,
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    bottom: 1,
+    right: 1,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
     backgroundColor: Colors.online,
     borderWidth: 2,
   },
@@ -184,6 +196,16 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+  },
+  bottomRowRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  typingText: {
+    fontSize: 14,
+    fontStyle: "italic",
+    flex: 1,
   },
   lastMessage: {
     fontSize: 14,

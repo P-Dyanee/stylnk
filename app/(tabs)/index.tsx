@@ -1,28 +1,26 @@
+import { useAppTheme } from "@/src/theme/app-theme";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import React, { useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  SafeAreaView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    FlatList,
+    SafeAreaView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import ConversationItem from "../../components/ConversationItem";
 import { Colors } from "../../constants/theme";
 import {
-  authStorage,
-  chatApi,
-  composeApi,
-  type ChatListItem,
-  type DirectoryUser,
-  userApi,
+    authStorage,
+    chatApi,
+    type ChatListItem
 } from "../../src/services/api";
-import { useAppTheme } from "@/src/theme/app-theme";
 
 type ConversationListItem = {
   id: string;
@@ -81,13 +79,13 @@ function renderHighlightedText(
 
 export default function ChatsScreen() {
   const router = useRouter();
-  const { palette } = useAppTheme();
+  const { palette, mode } = useAppTheme();
   const [search, setSearch] = useState("");
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
-  const [people, setPeople] = useState<DirectoryUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [creatingChatFor, setCreatingChatFor] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"all" | "chats" | "groups" | "unread">("all");
 
   const loadChats = React.useCallback(async (showRefresh = false) => {
     if (showRefresh) {
@@ -97,12 +95,8 @@ export default function ChatsScreen() {
     }
 
     try {
-      const [chats, users] = await Promise.all([
-        chatApi.listChats(),
-        userApi.listUsers(),
-      ]);
+      const chats = await chatApi.listChats();
       setConversations(chats.map(toConversationItem));
-      setPeople(users);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Please try again.";
 
@@ -125,56 +119,63 @@ export default function ChatsScreen() {
     }, [loadChats]),
   );
 
-  const filtered = conversations.filter((c) =>
-    c.name.toLowerCase().includes(search.toLowerCase()),
-  );
-  const lowerSearch = search.toLowerCase();
-  const existingConversationNames = new Set(
-    conversations.map((conversation) => conversation.name.toLowerCase()),
-  );
-  const matchingPeople = people.filter((person) => {
-    if (!lowerSearch) return false;
-
-    const matchesSearch =
-      person.fullName.toLowerCase().includes(lowerSearch) ||
-      person.email.toLowerCase().includes(lowerSearch);
-
-    return matchesSearch && !existingConversationNames.has(person.fullName.toLowerCase());
-  });
-
-  const handleStartDirectChat = async (person: DirectoryUser) => {
-    setCreatingChatFor(person.id);
-    try {
-      const chat = await composeApi.startDirectChat(person.id);
-      router.push({
-        pathname: "/chat/[id]",
-        params: {
-          id: chat.id,
-          name: chat.name,
-        },
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Please try again.";
-      Alert.alert("Couldn't start chat", message);
-    } finally {
-      setCreatingChatFor(null);
+  // Filter conversations based on active tab
+  const getFilteredConversations = () => {
+    switch (activeTab) {
+      case "chats":
+        return conversations.filter(c => !c.name.includes("Group")); // Simple group detection
+      case "groups":
+        return conversations.filter(c => c.name.includes("Group")); // Simple group detection
+      case "unread":
+        return conversations.filter(c => c.unread > 0);
+      case "all":
+      default:
+        return conversations;
     }
   };
 
-  const visiblePeople = lowerSearch.length > 0 ? matchingPeople : people;
-  const showPeopleResults = visiblePeople.length > 0;
+  const filteredConversations = getFilteredConversations().filter((c) =>
+    c.name.toLowerCase().includes(search.toLowerCase()),
+  );
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: palette.background }]}>
+      <StatusBar barStyle={mode === "dark" ? "light-content" : "dark-content"} backgroundColor={palette.background} />
+      
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: palette.border }]}>
-        <Text style={[styles.headerTitle, { color: palette.text }]}>Chats</Text>
-        <TouchableOpacity
-          style={[styles.headerIcon, { backgroundColor: palette.primarySurface }]}
-          onPress={() => router.push("/new-message")}
-        >
-          <Ionicons name="create-outline" size={24} color={Colors.primary} />
-        </TouchableOpacity>
+        <View style={styles.headerLeft}>
+          <Text style={[styles.chatsText, { color: palette.text }]}>Chats</Text>
+        </View>
+        <View style={styles.headerRight}>
+          <TouchableOpacity style={styles.headerIcon}>
+            <Ionicons name="search-outline" size={22} color={palette.text} />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.headerIcon} onPress={() => router.push("/new-message")}>
+            <Ionicons name="add-circle-outline" size={24} color={palette.text} />
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Category Tabs */}
+      <View style={[styles.tabsContainer, { borderBottomColor: palette.border }]}>
+        {(["all", "chats", "groups", "unread"] as const).map((tab) => (
+          <TouchableOpacity
+            key={tab}
+            style={styles.tab}
+            onPress={() => setActiveTab(tab)}
+          >
+            <Text
+              style={[
+                styles.tabText,
+                { color: activeTab === tab ? Colors.primary : palette.textSecondary },
+                activeTab === tab && styles.activeTabText,
+              ]}
+            >
+              {tab.charAt(0).toUpperCase() + tab.slice(1)}
+            </Text>
+          </TouchableOpacity>
+        ))}
       </View>
 
       {/* Search Bar */}
@@ -220,73 +221,8 @@ export default function ChatsScreen() {
         </View>
       ) : (
         <FlatList
-          data={filtered}
+          data={filteredConversations}
           keyExtractor={(item) => item.id}
-          ListHeaderComponent={
-            showPeopleResults ? (
-              <View style={styles.peopleSection}>
-                <Text style={[styles.sectionTitle, { color: palette.textSecondary }]}>
-                  {lowerSearch.length > 0 ? "People" : "All Users"}
-                </Text>
-                {visiblePeople.map((person) => {
-                  const initials = person.fullName
-                    .split(" ")
-                    .map((part) => part[0])
-                    .filter(Boolean)
-                    .slice(0, 2)
-                    .join("")
-                    .toUpperCase();
-                  const isCreating = creatingChatFor === person.id;
-
-                  return (
-                    <TouchableOpacity
-                      key={person.id}
-                      style={[
-                        styles.personRow,
-                        {
-                          backgroundColor: palette.background,
-                          borderBottomColor: palette.border,
-                        },
-                      ]}
-                      activeOpacity={0.8}
-                      disabled={isCreating}
-                      onPress={() => handleStartDirectChat(person)}
-                    >
-                      <View style={styles.personAvatar}>
-                        <Text style={styles.personAvatarText}>{initials}</Text>
-                      </View>
-                      <View style={styles.personInfo}>
-                        {renderHighlightedText(
-                          person.fullName,
-                          search,
-                          [styles.personName, { color: palette.text }],
-                          styles.searchHighlight,
-                        )}
-                        {renderHighlightedText(
-                          person.email,
-                          search,
-                          [styles.personEmail, { color: palette.textSecondary }],
-                          styles.searchHighlight,
-                        )}
-                      </View>
-                      {isCreating ? (
-                        <ActivityIndicator color={Colors.primary} />
-                      ) : (
-                        <Ionicons
-                          name="chatbubble-ellipses-outline"
-                          size={20}
-                          color={Colors.primary}
-                        />
-                      )}
-                    </TouchableOpacity>
-                  );
-                })}
-                <Text style={[styles.sectionTitle, { color: palette.textSecondary }]}>
-                  Conversations
-                </Text>
-              </View>
-            ) : null
-          }
           renderItem={({ item }) => (
             <ConversationItem {...item} searchQuery={search} />
           )}
@@ -299,8 +235,14 @@ export default function ChatsScreen() {
               />
               <Text style={[styles.emptyText, { color: palette.textSecondary }]}>
                 {search
-                  ? "No matching people or conversations found"
-                  : "No chats yet"}
+                  ? "No matching conversations found"
+                  : activeTab === "unread"
+                  ? "No unread messages"
+                  : activeTab === "chats"
+                  ? "No chats yet"
+                  : activeTab === "groups"
+                  ? "No groups yet"
+                  : "No conversations yet"}
               </Text>
             </View>
           }
@@ -309,14 +251,6 @@ export default function ChatsScreen() {
           showsVerticalScrollIndicator={false}
         />
       )}
-
-      {/* Floating Action Button */}
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={() => router.push("/new-message")}
-      >
-        <Ionicons name="chatbubble-ellipses-outline" size={26} color="#fff" />
-      </TouchableOpacity>
     </SafeAreaView>
   );
 }
@@ -330,17 +264,40 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.light.border,
   },
-  headerTitle: {
+  headerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  chatsText: {
     fontSize: 24,
     fontWeight: "bold",
   },
+  headerRight: {
+    flexDirection: "row",
+    gap: 12,
+  },
   headerIcon: {
-    padding: 8,
-    borderRadius: 20,
+    padding: 4,
+  },
+  tabsContainer: {
+    flexDirection: "row",
+    borderBottomWidth: 1,
+    backgroundColor: "#fff",
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  tabText: {
+    fontSize: 15,
+    fontWeight: "500",
+  },
+  activeTabText: {
+    fontWeight: "700",
   },
   searchContainer: {
     flexDirection: "row",
@@ -374,68 +331,4 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 16,
   },
-  peopleSection: {
-    paddingTop: 8,
-  },
-  sectionTitle: {
-    fontSize: 13,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-    paddingTop: 8,
-  },
-  personRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-  },
-  personAvatar: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: Colors.primary,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
-  },
-  personAvatarText: {
-    color: "#fff",
-    fontWeight: "bold",
-    fontSize: 16,
-  },
-  personInfo: {
-    flex: 1,
-  },
-  personName: {
-    fontSize: 16,
-    fontWeight: "600",
-    marginBottom: 4,
-  },
-  personEmail: {
-    fontSize: 13,
-  },
-  searchHighlight: {
-    color: Colors.primary,
-    fontWeight: "700",
-  },
-  fab: {
-    position: "absolute",
-    bottom: 24,
-    right: 20,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: Colors.primary,
-    justifyContent: "center",
-    alignItems: "center",
-    shadowColor: Colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-});
+  });
