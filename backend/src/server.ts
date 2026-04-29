@@ -10,14 +10,19 @@ const app = express();
 const prisma = new PrismaClient();
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ limit: "10mb", extended: true }));
 
 const jwtSecret = process.env.JWT_SECRET || "change-this-secret";
 const port = Number(process.env.PORT || 4000);
 
 type AuthRequest = express.Request & { userId?: string };
 
-const auth = (req: AuthRequest, res: express.Response, next: express.NextFunction) => {
+const auth = (
+  req: AuthRequest,
+  res: express.Response,
+  next: express.NextFunction,
+) => {
   const header = req.headers.authorization;
   if (!header?.startsWith("Bearer ")) {
     return res.status(401).json({ message: "Missing auth token" });
@@ -39,18 +44,17 @@ const asParam = (value: string | string[] | undefined) =>
 
 app.get("/health", async (_req, res) => {
   try {
-    // Test database connection
     await prisma.$queryRaw`SELECT 1`;
-    res.json({ 
-      status: "ok", 
+    res.json({
+      status: "ok",
       database: "connected",
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    res.status(500).json({ 
-      status: "error", 
+    res.status(500).json({
+      status: "error",
       database: "disconnected",
-      error: error instanceof Error ? error.message : "Unknown error"
+      error: error instanceof Error ? error.message : "Unknown error",
     });
   }
 });
@@ -150,12 +154,12 @@ app.post("/auth/login", async (req, res) => {
 
 app.patch("/me/avatar", auth, async (req: AuthRequest, res) => {
   console.log("Avatar upload request received for user:", req.userId);
-  
+
   const schema = z.object({
     avatarUrl: z
       .string()
       .min(1)
-      .max(10_000_000) // 10MB limit to accommodate base64
+      .max(10_000_000)
       .refine(
         (value) =>
           value.startsWith("data:image/jpeg;base64,") ||
@@ -169,7 +173,9 @@ app.patch("/me/avatar", auth, async (req: AuthRequest, res) => {
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
     console.log("Avatar validation failed:", parsed.error);
-    return res.status(400).json({ message: "Invalid avatar payload", error: parsed.error });
+    return res
+      .status(400)
+      .json({ message: "Invalid avatar payload", error: parsed.error });
   }
 
   try {
@@ -190,17 +196,32 @@ app.patch("/me/avatar", auth, async (req: AuthRequest, res) => {
     });
   } catch (error) {
     console.error("Database update error:", error);
-    res.status(500).json({ 
-      message: "Failed to update avatar in database", 
-      error: error instanceof Error ? error.message : "Unknown error" 
+    res.status(500).json({
+      message: "Failed to update avatar in database",
+      error: error instanceof Error ? error.message : "Unknown error",
     });
   }
 });
 
+// ✅ NEW: Real-time stats endpoint
+app.get("/me/stats", auth, async (req: AuthRequest, res) => {
+  const userId = req.userId!;
+
+  const [chats, groups] = await Promise.all([
+    prisma.chatMember.count({
+      where: { userId, chat: { isGroup: false } },
+    }),
+    prisma.chatMember.count({
+      where: { userId, chat: { isGroup: true } },
+    }),
+  ]);
+
+  res.json({ chats, groups, calls: 0 });
+});
+
 app.get("/users", auth, async (req: AuthRequest, res) => {
   const currentUserId = req.userId!;
-  console.log("Fetching users for:", currentUserId);
-  
+
   const users = await prisma.user.findMany({
     where: {
       id: { not: currentUserId },
@@ -214,7 +235,6 @@ app.get("/users", auth, async (req: AuthRequest, res) => {
     },
   });
 
-  console.log(`Found ${users.length} users`);
   res.json(users);
 });
 
@@ -238,10 +258,14 @@ app.get("/chats", auth, async (req: AuthRequest, res) => {
 
   const result = memberships.map((m) => {
     const last = m.chat.messages[0];
-    const oneToOnePeer = m.chat.members.find((cm) => cm.userId !== userId)?.user;
+    const oneToOnePeer = m.chat.members.find(
+      (cm) => cm.userId !== userId,
+    )?.user;
     return {
       id: m.chat.id,
-      name: m.chat.isGroup ? m.chat.name : oneToOnePeer?.fullName || m.chat.name,
+      name: m.chat.isGroup
+        ? m.chat.name
+        : oneToOnePeer?.fullName || m.chat.name,
       isGroup: m.chat.isGroup,
       isOnline: false,
       unreadCount: 0,

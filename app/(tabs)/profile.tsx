@@ -5,7 +5,7 @@ import {
     Spacing,
     Typography,
 } from "@/constants/theme";
-import { authApi, authStorage, type AuthUser } from "@/src/services/api";
+import { authApi, authStorage, userStatsApi, type AuthUser } from "@/src/services/api";
 import { preferencesStorage } from "@/src/services/preferences";
 import { useAppTheme } from "@/src/theme/app-theme";
 import { Ionicons } from "@expo/vector-icons";
@@ -68,6 +68,8 @@ export default function ProfileScreen() {
   const [languageLabel, setLanguageLabel] = React.useState("English");
   const [avatarUri, setAvatarUri] = React.useState("");
   const [uploadingAvatar, setUploadingAvatar] = React.useState(false);
+  // ✅ NEW: Real-time stats state
+  const [stats, setStats] = React.useState({ chats: 0, groups: 0, calls: 0 });
 
   useFocusEffect(
     React.useCallback(() => {
@@ -88,6 +90,15 @@ export default function ProfileScreen() {
         setUser(currentUser);
         setLanguageLabel(language.language);
         setAvatarUri(currentUser.avatarUrl || profileExtras.avatarUri);
+
+        // ✅ NEW: Fetch real-time stats
+        try {
+          const userStats = await userStatsApi.getStats();
+          setStats(userStats);
+        } catch (e) {
+          console.warn("Could not load stats:", e);
+        }
+
         setLoading(false);
       };
 
@@ -141,12 +152,12 @@ export default function ProfileScreen() {
     const image = await ImageUploadHelper.pickImage({
       allowsEditing: true,
       aspect: [1, 1],
-      quality: 0.6, // Reduced quality for faster upload
-      maxSizeMB: 2, // Reduced to 2MB for much faster uploads
+      quality: 0.6,
+      maxSizeMB: 2,
     });
 
     if (!image) {
-      return; // User cancelled or error occurred (helper shows alerts)
+      return;
     }
 
     const dataUrl = ImageUploadHelper.createDataUrl(image);
@@ -177,7 +188,7 @@ export default function ProfileScreen() {
   };
 
   if (loading || !user) {
-      return (
+    return (
       <SafeAreaView style={[styles.container, { backgroundColor: palette.background }]}>
         <StatusBar barStyle={palette.statusBar === "dark" ? "light-content" : "dark-content"} backgroundColor={palette.background} />
         <View style={styles.loadingState}>
@@ -196,8 +207,6 @@ export default function ProfileScreen() {
     .join("")
     .toUpperCase();
 
-  const handle = `@${user.email.split("@")[0]}`;
-
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: palette.background }]}>
       <StatusBar barStyle={palette.statusBar === "dark" ? "light-content" : "dark-content"} backgroundColor={palette.background} />
@@ -208,15 +217,11 @@ export default function ProfileScreen() {
         {/* Header */}
         <View style={styles.header}>
           <View style={styles.headerSpacer} />
-          <TouchableOpacity 
-            style={[styles.headerButton, { backgroundColor: palette.card }]} 
+          <TouchableOpacity
+            style={[styles.headerButton, { backgroundColor: palette.card }]}
             onPress={() => router.push("/modal")}
           >
-            <Ionicons
-              name="settings-outline"
-              size={22}
-              color={palette.text}
-            />
+            <Ionicons name="settings-outline" size={22} color={palette.text} />
           </TouchableOpacity>
         </View>
 
@@ -250,12 +255,12 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        {/* Stats Row */}
+        {/* ✅ Stats Row — now real-time */}
         <View style={[styles.statsRow, { backgroundColor: palette.card }]}>
           {[
-            { label: "Chats", value: "24" },
-            { label: "Groups", value: "7" },
-            { label: "Calls", value: "156" },
+            { label: "Chats", value: String(stats.chats) },
+            { label: "Groups", value: String(stats.groups) },
+            { label: "Calls", value: String(stats.calls) },
           ].map((stat) => (
             <TouchableOpacity key={stat.label} style={styles.statItem}>
               <Text style={[styles.statValue, { color: palette.text }]}>{stat.value}</Text>
@@ -345,9 +350,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.xl,
     paddingVertical: Spacing.lg,
   },
-  headerSpacer: {
-    flex: 1,
-  },
+  headerSpacer: { flex: 1 },
   headerButton: {
     width: 40,
     height: 40,
@@ -400,15 +403,8 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.sm,
   },
   statusRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  onlineDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  statusText: {
-    fontSize: Typography.fontSizes.sm,
-    fontWeight: "500",
-  },
+  onlineDot: { width: 8, height: 8, borderRadius: 4 },
+  statusText: { fontSize: Typography.fontSizes.sm, fontWeight: "500" },
   statsRow: {
     flexDirection: "row",
     marginHorizontal: Spacing.xl,
@@ -427,10 +423,7 @@ const styles = StyleSheet.create({
     fontWeight: Typography.fontWeights.bold,
     color: Colors.primary,
   },
-  statLabel: {
-    fontSize: Typography.fontSizes.xs,
-    marginTop: 2,
-  },
+  statLabel: { fontSize: Typography.fontSizes.xs, marginTop: 2 },
   menuContainer: {
     marginHorizontal: Spacing.xl,
     borderRadius: BorderRadius.lg,
