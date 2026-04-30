@@ -133,6 +133,7 @@ export default function SettingsScreen() {
   const [profileExtras, setProfileExtras] = React.useState<ProfileExtras>({
     bio: "",
     phone: "",
+    avatarUri: "",
   });
   const [privacy, setPrivacy] = React.useState<PrivacySettings>({
     lastSeen: "Everyone",

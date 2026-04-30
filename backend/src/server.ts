@@ -3,11 +3,26 @@ import bcrypt from "bcryptjs";
 import cors from "cors";
 import "dotenv/config";
 import express from "express";
+import http from "http";
 import jwt from "jsonwebtoken";
+import { Server } from "socket.io";
 import { z } from "zod";
 
 const app = express();
 const prisma = new PrismaClient();
+
+console.log("Prisma models:", Object.keys(prisma));
+
+const server = http.createServer(app);
+
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+  },
+});
+
+// userId → socketId map
+const users: Record<string, string> = {};
 
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
@@ -203,20 +218,24 @@ app.patch("/me/avatar", auth, async (req: AuthRequest, res) => {
   }
 });
 
-// ✅ NEW: Real-time stats endpoint
 app.get("/me/stats", auth, async (req: AuthRequest, res) => {
   const userId = req.userId!;
 
-  const [chats, groups] = await Promise.all([
+  const [chats, groups, calls] = await Promise.all([
     prisma.chatMember.count({
       where: { userId, chat: { isGroup: false } },
     }),
     prisma.chatMember.count({
       where: { userId, chat: { isGroup: true } },
     }),
+    prisma.call.count({
+      where: {
+        OR: [{ callerId: userId }, { recipientId: userId }],
+      },
+    }),
   ]);
 
-  res.json({ chats, groups, calls: 0 });
+  res.json({ chats, groups, calls });
 });
 
 app.get("/users", auth, async (req: AuthRequest, res) => {
@@ -441,6 +460,190 @@ app.post("/chats/:id/messages", auth, async (req: AuthRequest, res) => {
   });
 });
 
-app.listen(port, () => {
+// ─── Calls ────────────────────────────────────────────────────────────────────
+
+app.get("/calls", auth, async (req: AuthRequest, res) => {
+  const userId = req.userId!;
+  const calls = await prisma.call.findMany({
+    where: {
+      OR: [{ callerId: userId }, { recipientId: userId }],
+    },
+    include: {
+      User_Call_callerIdToUser: { select: { id: true, fullName: true, avatarUrl: true } },
+      User_Call_recipientIdToUser: { select: { id: true, fullName: true, avatarUrl: true } },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+  });
+
+  const result = calls.map((c) => {
+    const isOutgoing = c.callerId === userId;
+    const peer = isOutgoing ? c.User_Call_recipientIdToUser : c.User_Call_callerIdToUser;
+    return {
+      id: c.id,
+      name: peer.fullName,
+      peerId: peer.id,
+      avatar: peer.avatarUrl,
+      type: isOutgoing
+        ? "outgoing"
+        : c.status === "missed"
+          ? "missed"
+          : "incoming",
+      callType: c.callType,
+      duration: c.duration || null,
+      time: toTime(c.createdAt),
+      createdAt: c.createdAt.toISOString(),
+    };
+  });
+
+  res.json(result);
+});
+
+app.post("/calls", auth, async (req: AuthRequest, res) => {
+  const schema = z.object({
+    recipientId: z.string().min(1),
+    callType: z.enum(["audio", "video"]),
+    status: z.enum(["incoming", "outgoing", "missed"]),
+    duration: z.string().optional(),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ message: "Invalid request body" });
+  }
+
+  const { recipientId, callType, status, duration } = parsed.data;
+  const callerId = req.userId!;
+
+  if (recipientId === callerId) {
+    return res.status(400).json({ message: "Cannot call yourself" });
+  }
+
+  const recipient = await prisma.user.findUnique({
+    where: { id: recipientId },
+  });
+  if (!recipient) {
+    return res.status(404).json({ message: "Recipient not found" });
+  }
+
+  const call = await prisma.call.create({
+    data: { callerId, recipientId, callType, status, duration },
+  });
+
+  res.status(201).json({
+    id: call.id,
+    callerId: call.callerId,
+    callType: call.callType,
+    status: call.status,
+    duration: call.duration,
+    createdAt: call.createdAt.toISOString(),
+  });
+});
+
+app.patch("/calls/:id", auth, async (req: AuthRequest, res) => {
+  const schema = z.object({
+    status: z.enum(["incoming", "outgoing", "missed"]).optional(),
+    duration: z.string().optional(),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ message: "Invalid request body" });
+  }
+
+  const callId = asParam(req.params.id);
+  if (!callId) return res.status(400).json({ message: "Missing call id" });
+  const userId = req.userId!;
+
+  const existing = await prisma.call.findUnique({ where: { id: callId } });
+  if (!existing) return res.status(404).json({ message: "Call not found" });
+  if (existing.callerId !== userId && existing.recipientId !== userId) {
+    return res.status(403).json({ message: "Not authorised" });
+  }
+
+  const updated = await prisma.call.update({
+    where: { id: callId },
+    data: parsed.data,
+  });
+
+  res.json({
+    id: updated.id,
+    status: updated.status,
+    duration: updated.duration,
+  });
+});
+
+app.delete("/calls/:id", auth, async (req: AuthRequest, res) => {
+  const callId = asParam(req.params.id);
+  if (!callId) return res.status(400).json({ message: "Missing call id" });
+  const userId = req.userId!;
+
+  const existing = await prisma.call.findUnique({ where: { id: callId } });
+  if (!existing) return res.status(404).json({ message: "Call not found" });
+  if (existing.callerId !== userId && existing.recipientId !== userId) {
+    return res.status(403).json({ message: "Not authorised" });
+  }
+
+  await prisma.call.delete({ where: { id: callId } });
+  res.status(204).send();
+});
+
+// ─── SOCKET.IO CALL SYSTEM ─────────────────────────────────────────────
+
+io.on("connection", (socket) => {
+  console.log("User connected:", socket.id);
+
+  // Register logged-in user
+  socket.on("register", (userId: string) => {
+    users[userId] = socket.id;
+    console.log("Registered:", userId, socket.id);
+  });
+
+  // ─── CALL USER ─────────────────────────────
+  socket.on("call-user", ({ toUserId, offer }) => {
+    const targetSocket = users[toUserId];
+
+    if (!targetSocket) {
+      console.log("User not online:", toUserId);
+      return;
+    }
+
+    io.to(targetSocket).emit("incoming-call", {
+      fromUserId: socket.id,
+      offer,
+    });
+  });
+
+  // ─── ANSWER CALL ───────────────────────────
+  socket.on("answer-call", ({ toSocketId, answer }) => {
+    io.to(toSocketId).emit("call-answered", { answer });
+  });
+
+  // ─── ICE CANDIDATES ────────────────────────
+  socket.on("ice-candidate", ({ toSocketId, candidate }) => {
+    io.to(toSocketId).emit("ice-candidate", { candidate });
+  });
+
+  // ─── END CALL ──────────────────────────────
+  socket.on("end-call", ({ toSocketId }) => {
+    io.to(toSocketId).emit("call-ended");
+  });
+
+  socket.on("disconnect", () => {
+    console.log("User disconnected:", socket.id);
+
+    // cleanup mapping
+    for (const userId in users) {
+      if (users[userId] === socket.id) {
+        delete users[userId];
+        break;
+      }
+    }
+  });
+});
+
+// ─── Start ────────────────────────────────────────────────────────────────────
+
+server.listen(port, () => {
   console.log(`Backend listening on http://localhost:${port}`);
 });

@@ -1,227 +1,221 @@
-import { Call, MOCK_CALLS } from "@/constants/mockData";
+import socket from "@/src/socket";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import React, { useEffect, useRef, useState } from "react";
 import {
-  BorderRadius,
-  Colors,
-  Shadows,
-  Spacing,
-  Typography,
-} from "@/constants/theme";
-import { useAppTheme } from "@/src/theme/app-theme";
-import { Ionicons } from "@expo/vector-icons";
-import React from "react";
-import {
-  FlatList,
-  SafeAreaView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    SafeAreaView,
+    StyleSheet,
+    Text,
+    TouchableOpacity
 } from "react-native";
+import {
+    mediaDevices,
+    RTCIceCandidate,
+    RTCPeerConnection,
+    RTCSessionDescription,
+    RTCView,
+} from "react-native-webrtc";
 
-function Avatar({ name, size = 52 }: { name: string; size?: number }) {
-  const initials = name
-    .split(" ")
-    .map((n) => n[0])
-    .slice(0, 2)
-    .join("");
+export default function CallScreen() {
+  const router = useRouter();
+  const { to, from, isCaller, isReceiver } = useLocalSearchParams();
+
+  const [localStream, setLocalStream] = useState<any>(null);
+  const [remoteStream, setRemoteStream] = useState<any>(null);
+  const [callAccepted, setCallAccepted] = useState(false);
+
+  const pc = useRef<RTCPeerConnection | null>(null);
+
+  const configuration = {
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+  };
+
+  // ─────────────────────────────────────────────
+  // 1. Get media (camera + mic)
+  // ─────────────────────────────────────────────
+  useEffect(() => {
+    startLocalStream();
+  }, []);
+
+  const startLocalStream = async () => {
+    const stream = await mediaDevices.getUserMedia({
+      video: true,
+      audio: true,
+    });
+
+    setLocalStream(stream);
+  };
+
+  // ─────────────────────────────────────────────
+  // 2. Create peer connection
+  // ─────────────────────────────────────────────
+  const createPeerConnection = () => {
+    const connection = new RTCPeerConnection(configuration);
+
+    connection.onaddstream = (event) => {
+      setRemoteStream(event.stream);
+    };
+
+    connection.onicecandidate = (event) => {
+      if (event.candidate) {
+        socket.emit("ice-candidate", {
+          to: isCaller ? to : from,
+          candidate: event.candidate,
+        });
+      }
+    };
+
+    if (localStream) {
+      connection.addStream(localStream);
+    }
+
+    pc.current = connection;
+  };
+
+  // ─────────────────────────────────────────────
+  // 3. Caller flow
+  // ─────────────────────────────────────────────
+  useEffect(() => {
+    if (isCaller && localStream) {
+      createPeerConnection();
+
+      const startCall = async () => {
+        const offer = await pc.current!.createOffer();
+        await pc.current!.setLocalDescription(offer);
+
+        socket.emit("call-user", {
+          to,
+          offer,
+        });
+      };
+
+      startCall();
+    }
+  }, [isCaller, localStream]);
+
+  // ─────────────────────────────────────────────
+  // 4. Receiver flow
+  // ─────────────────────────────────────────────
+  useEffect(() => {
+    socket.on("incoming-call", async ({ from, offer }) => {
+      createPeerConnection();
+
+      await pc.current!.setRemoteDescription(new RTCSessionDescription(offer));
+
+      const answer = await pc.current!.createAnswer();
+      await pc.current!.setLocalDescription(answer);
+
+      socket.emit("answer-call", {
+        to: from,
+        answer,
+      });
+
+      setCallAccepted(true);
+    });
+
+    socket.on("call-answered", async ({ answer }) => {
+      await pc.current!.setRemoteDescription(new RTCSessionDescription(answer));
+      setCallAccepted(true);
+    });
+
+    socket.on("ice-candidate", async ({ candidate }) => {
+      try {
+        await pc.current!.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (e) {
+        console.log("ICE error", e);
+      }
+    });
+
+    socket.on("call-ended", () => {
+      endCall();
+    });
+
+    return () => {
+      socket.off("incoming-call");
+      socket.off("call-answered");
+      socket.off("ice-candidate");
+      socket.off("call-ended");
+    };
+  }, []);
+
+  // ─────────────────────────────────────────────
+  // 5. End call
+  // ─────────────────────────────────────────────
+  const endCall = () => {
+    if (pc.current) {
+      pc.current.close();
+      pc.current = null;
+    }
+
+    if (localStream) {
+      localStream.getTracks().forEach((track: any) => track.stop());
+    }
+
+    socket.emit("end-call", {
+      to: isCaller ? to : from,
+    });
+
+    router.back();
+  };
+
+  // ─────────────────────────────────────────────
+  // UI
+  // ─────────────────────────────────────────────
   return (
-    <View
-      style={[
-        styles.avatarCircle,
-        { width: size, height: size, borderRadius: size / 2 },
-      ]}
-    >
-      <Text style={[styles.avatarText, { fontSize: size * 0.32 }]}>
-        {initials}
+    <SafeAreaView style={styles.container}>
+      <Text style={styles.title}>
+        {callAccepted ? "Connected" : "Calling..."}
       </Text>
-    </View>
-  );
-}
 
-function CallIcon({
-  type,
-  callType,
-}: {
-  type: Call["type"];
-  callType: Call["callType"];
-}) {
-  const color =
-    type === "missed"
-      ? Colors.danger
-      : type === "incoming"
-        ? Colors.success
-        : Colors.primary;
-  const arrow =
-    type === "incoming"
-      ? "arrow-down"
-      : type === "outgoing"
-        ? "arrow-up"
-        : "arrow-down";
-  const icon = callType === "video" ? "videocam-outline" : "call-outline";
+      {/* Remote video */}
+      {remoteStream && (
+        <RTCView streamURL={remoteStream.toURL()} style={styles.remoteVideo} />
+      )}
 
-  return (
-    <View style={styles.callIconRow}>
-      <Ionicons name={arrow as any} size={12} color={color} />
-      <Ionicons
-        name={icon as any}
-        size={16}
-        color={color}
-        style={{ marginLeft: 2 }}
-      />
-    </View>
-  );
-}
+      {/* Local video */}
+      {localStream && (
+        <RTCView streamURL={localStream.toURL()} style={styles.localVideo} />
+      )}
 
-function CallItem({
-  item,
-  palette,
-}: {
-  item: Call;
-  palette: ReturnType<typeof useAppTheme>["palette"];
-}) {
-  return (
-    <View style={styles.callItem}>
-      <Avatar name={item.name} />
-      <View style={styles.callContent}>
-        <Text
-          style={[
-            styles.callName,
-            { color: item.type === "missed" ? Colors.danger : palette.text },
-          ]}
-        >
-          {item.name}
-        </Text>
-        <View style={styles.callMeta}>
-          <CallIcon type={item.type} callType={item.callType} />
-          <Text style={[styles.callTime, { color: palette.textSecondary }]}>
-            {item.time}
-          </Text>
-          {item.duration && (
-            <Text style={[styles.callDuration, { color: palette.textMuted }]}>
-              {" · "}
-              {item.duration}
-            </Text>
-          )}
-        </View>
-      </View>
-      <TouchableOpacity
-        style={[styles.callBackBtn, { backgroundColor: palette.primarySurface }]}
-        activeOpacity={0.7}
-      >
-        <Ionicons
-          name={item.callType === "video" ? "videocam-outline" : "call-outline"}
-          size={20}
-          color={Colors.primary}
-        />
-      </TouchableOpacity>
-    </View>
-  );
-}
-
-export default function CallsScreen() {
-  const { palette } = useAppTheme();
-
-  return (
-    <SafeAreaView style={[styles.container, { backgroundColor: palette.background }]}>
-      <StatusBar
-        barStyle={palette.statusBar === "dark" ? "light-content" : "dark-content"}
-        backgroundColor={palette.background}
-      />
-
-      <View style={styles.header}>
-        <Text style={[styles.headerTitle, { color: palette.text }]}>Calls</Text>
-        <TouchableOpacity
-          style={[styles.headerButton, { backgroundColor: palette.primarySurface }]}
-        >
-          <Ionicons name="search-outline" size={22} color={Colors.primary} />
-        </TouchableOpacity>
-      </View>
-
-      <FlatList
-        data={MOCK_CALLS}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => <CallItem item={item} palette={palette} />}
-        ItemSeparatorComponent={() => (
-          <View style={[styles.separator, { backgroundColor: palette.divider }]} />
-        )}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.listContent}
-      />
-
-      <TouchableOpacity style={styles.fab} activeOpacity={0.85}>
-        <Ionicons name="call" size={24} color={Colors.white} />
+      <TouchableOpacity style={styles.endBtn} onPress={endCall}>
+        <Text style={styles.endText}>End Call</Text>
       </TouchableOpacity>
     </SafeAreaView>
   );
 }
 
+// ─────────────────────────────────────────────
+// Styles
+// ─────────────────────────────────────────────
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.lg,
-  },
-  headerTitle: {
-    fontSize: Typography.fontSizes.xxxl,
-    fontWeight: Typography.fontWeights.bold,
-    letterSpacing: -0.5,
-  },
-  headerButton: {
-    width: 40,
-    height: 40,
-    borderRadius: BorderRadius.full,
-    alignItems: "center",
+  container: {
+    flex: 1,
+    backgroundColor: "black",
     justifyContent: "center",
   },
-  listContent: { paddingBottom: 100 },
-  callItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: Spacing.xl,
-    paddingVertical: 14,
+  title: {
+    color: "white",
+    textAlign: "center",
+    marginBottom: 10,
   },
-  avatarCircle: {
-    backgroundColor: Colors.primary,
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: Spacing.lg,
+  remoteVideo: {
+    flex: 1,
   },
-  avatarText: {
-    color: Colors.white,
-    fontWeight: Typography.fontWeights.bold,
-  },
-  callContent: { flex: 1 },
-  callName: {
-    fontSize: Typography.fontSizes.md,
-    fontWeight: Typography.fontWeights.medium,
-    marginBottom: 4,
-  },
-  callMeta: { flexDirection: "row", alignItems: "center" },
-  callIconRow: { flexDirection: "row", alignItems: "center", marginRight: 6 },
-  callTime: { fontSize: Typography.fontSizes.sm },
-  callDuration: { fontSize: Typography.fontSizes.sm },
-  callBackBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: BorderRadius.full,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  separator: { height: 1, marginLeft: 88 },
-  fab: {
+  localVideo: {
+    width: 120,
+    height: 180,
     position: "absolute",
-    bottom: 90,
-    right: Spacing.xl,
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    backgroundColor: Colors.primary,
-    alignItems: "center",
-    justifyContent: "center",
-    ...Shadows.lg,
+    top: 40,
+    right: 10,
+  },
+  endBtn: {
+    backgroundColor: "red",
+    padding: 16,
+    borderRadius: 30,
+    alignSelf: "center",
+    marginBottom: 40,
+  },
+  endText: {
+    color: "white",
+    fontWeight: "bold",
   },
 });

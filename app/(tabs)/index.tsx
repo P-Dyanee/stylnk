@@ -3,26 +3,26 @@ import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import React, { useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    SafeAreaView,
-    StatusBar,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  SafeAreaView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import ConversationItem from "../../components/ConversationItem";
 import { Colors } from "../../constants/theme";
 import {
-    authStorage,
-    chatApi,
-    composeApi,
-    userApi,
-    type ChatListItem,
-    type DirectoryUser,
+  authStorage,
+  chatApi,
+  composeApi,
+  userApi,
+  type ChatListItem,
+  type DirectoryUser,
 } from "../../src/services/api";
 
 type ConversationListItem = {
@@ -55,37 +55,45 @@ export default function ChatsScreen() {
   const router = useRouter();
   const { palette, mode } = useAppTheme();
   const [search, setSearch] = useState("");
-  const [conversations, setConversations] = useState<ConversationListItem[]>([]);
+  const [conversations, setConversations] = useState<ConversationListItem[]>(
+    [],
+  );
   const [people, setPeople] = useState<DirectoryUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [startingChat, setStartingChat] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"all" | "chats" | "unread" | "people">("all");
+  const [activeTab, setActiveTab] = useState<
+    "all" | "chats" | "unread" | "people"
+  >("all");
 
-  const loadData = React.useCallback(async (showRefresh = false) => {
-    if (showRefresh) setRefreshing(true);
-    else setLoading(true);
+  const loadData = React.useCallback(
+    async (showRefresh = false) => {
+      if (showRefresh) setRefreshing(true);
+      else setLoading(true);
 
-    try {
-      const [chats, users] = await Promise.all([
-        chatApi.listChats(),
-        userApi.listUsers(),
-      ]);
-      setConversations(chats.map(toConversationItem));
-      setPeople(users);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Please try again.";
-      if (message.toLowerCase().includes("auth token")) {
-        await authStorage.clearSession();
-        router.replace("/auth/login");
-        return;
+      try {
+        const [chats, users] = await Promise.all([
+          chatApi.listChats(),
+          userApi.listUsers(),
+        ]);
+        setConversations(chats.map(toConversationItem));
+        setPeople(users);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Please try again.";
+        if (message.toLowerCase().includes("auth token")) {
+          await authStorage.clearSession();
+          router.replace("/auth/login");
+          return;
+        }
+        Alert.alert("Couldn't load data", message);
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
       }
-      Alert.alert("Couldn't load data", message);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [router]);
+    },
+    [router],
+  );
 
   useFocusEffect(
     React.useCallback(() => {
@@ -99,7 +107,8 @@ export default function ChatsScreen() {
       const chat = await composeApi.startDirectChat(userId);
       router.push(`/chat/${chat.id}`);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Please try again.";
+      const message =
+        error instanceof Error ? error.message : "Please try again.";
       Alert.alert("Couldn't start chat", message);
     } finally {
       setStartingChat(null);
@@ -111,7 +120,7 @@ export default function ChatsScreen() {
       case "chats":
         return conversations;
       case "unread":
-        return conversations.filter(c => c.unread > 0);
+        return conversations.filter((c) => c.unread > 0);
       case "all":
       default:
         return conversations;
@@ -122,17 +131,29 @@ export default function ChatsScreen() {
     c.name.toLowerCase().includes(search.toLowerCase()),
   );
 
-  const filteredPeople = people.filter((p) =>
-    p.fullName.toLowerCase().includes(search.toLowerCase()) ||
-    p.email.toLowerCase().includes(search.toLowerCase()),
+  const filteredPeople = people.filter(
+    (p) =>
+      p.fullName.toLowerCase().includes(search.toLowerCase()) ||
+      p.email.toLowerCase().includes(search.toLowerCase()),
   );
 
   const getInitials = (name: string) =>
-    name.split(" ").map((p) => p[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
+    name
+      .split(" ")
+      .map((p) => p[0])
+      .filter(Boolean)
+      .slice(0, 2)
+      .join("")
+      .toUpperCase();
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: palette.background }]}>
-      <StatusBar barStyle={mode === "dark" ? "light-content" : "dark-content"} backgroundColor={palette.background} />
+    <SafeAreaView
+      style={[styles.container, { backgroundColor: palette.background }]}
+    >
+      <StatusBar
+        barStyle={mode === "dark" ? "light-content" : "dark-content"}
+        backgroundColor={palette.background}
+      />
 
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: palette.border }]}>
@@ -142,13 +163,22 @@ export default function ChatsScreen() {
             style={styles.headerIcon}
             onPress={() => router.push("/new-message")}
           >
-            <Ionicons name="add-circle-outline" size={24} color={palette.text} />
+            <Ionicons
+              name="add-circle-outline"
+              size={24}
+              color={palette.text}
+            />
           </TouchableOpacity>
         </View>
       </View>
 
       {/* Category Tabs */}
-      <View style={[styles.tabsContainer, { borderBottomColor: palette.border, backgroundColor: palette.card }]}>
+      <View
+        style={[
+          styles.tabsContainer,
+          { borderBottomColor: palette.border, backgroundColor: palette.card },
+        ]}
+      >
         {(["all", "chats", "unread", "people"] as const).map((tab) => (
           <TouchableOpacity
             key={tab}
@@ -158,23 +188,46 @@ export default function ChatsScreen() {
             <Text
               style={[
                 styles.tabText,
-                { color: activeTab === tab ? Colors.primary : palette.textSecondary },
+                {
+                  color:
+                    activeTab === tab ? Colors.primary : palette.textSecondary,
+                },
                 activeTab === tab && styles.activeTabText,
               ]}
             >
               {tab.charAt(0).toUpperCase() + tab.slice(1)}
             </Text>
-            {activeTab === tab && <View style={[styles.activeTabIndicator, { backgroundColor: Colors.primary }]} />}
+            {activeTab === tab && (
+              <View
+                style={[
+                  styles.activeTabIndicator,
+                  { backgroundColor: Colors.primary },
+                ]}
+              />
+            )}
           </TouchableOpacity>
         ))}
       </View>
 
       {/* Search Bar */}
-      <View style={[styles.searchContainer, { backgroundColor: palette.card, borderColor: palette.border }]}>
-        <Ionicons name="search-outline" size={18} color={palette.textSecondary} />
+      <View
+        style={[
+          styles.searchContainer,
+          { backgroundColor: palette.card, borderColor: palette.border },
+        ]}
+      >
+        <Ionicons
+          name="search-outline"
+          size={18}
+          color={palette.textSecondary}
+        />
         <TextInput
           style={[styles.searchInput, { color: palette.text }]}
-          placeholder={activeTab === "people" ? "Search people..." : "Search conversations..."}
+          placeholder={
+            activeTab === "people"
+              ? "Search people..."
+              : "Search conversations..."
+          }
           placeholderTextColor={palette.textMuted}
           value={search}
           onChangeText={setSearch}
@@ -190,7 +243,9 @@ export default function ChatsScreen() {
       {loading ? (
         <View style={styles.loadingState}>
           <ActivityIndicator color={Colors.primary} />
-          <Text style={[styles.loadingText, { color: palette.textSecondary }]}>Loading...</Text>
+          <Text style={[styles.loadingText, { color: palette.textSecondary }]}>
+            Loading...
+          </Text>
         </View>
       ) : activeTab === "people" ? (
         // People Tab
@@ -201,13 +256,28 @@ export default function ChatsScreen() {
           onRefresh={() => loadData(true)}
           showsVerticalScrollIndicator={false}
           renderItem={({ item }) => (
-            <View style={[styles.personRow, { borderBottomColor: palette.border }]}>
-              <View style={[styles.personAvatar, { backgroundColor: Colors.primary }]}>
-                <Text style={styles.personAvatarText}>{getInitials(item.fullName)}</Text>
+            <View
+              style={[styles.personRow, { borderBottomColor: palette.border }]}
+            >
+              <View
+                style={[
+                  styles.personAvatar,
+                  { backgroundColor: Colors.primary },
+                ]}
+              >
+                <Text style={styles.personAvatarText}>
+                  {getInitials(item.fullName)}
+                </Text>
               </View>
               <View style={styles.personInfo}>
-                <Text style={[styles.personName, { color: palette.text }]}>{item.fullName}</Text>
-                <Text style={[styles.personEmail, { color: palette.textSecondary }]}>{item.email}</Text>
+                <Text style={[styles.personName, { color: palette.text }]}>
+                  {item.fullName}
+                </Text>
+                <Text
+                  style={[styles.personEmail, { color: palette.textSecondary }]}
+                >
+                  {item.email}
+                </Text>
               </View>
               <TouchableOpacity
                 style={[styles.messageBtn, { backgroundColor: Colors.primary }]}
@@ -224,8 +294,14 @@ export default function ChatsScreen() {
           )}
           ListEmptyComponent={
             <View style={styles.empty}>
-              <Ionicons name="people-outline" size={48} color={palette.textSecondary} />
-              <Text style={[styles.emptyText, { color: palette.textSecondary }]}>
+              <Ionicons
+                name="people-outline"
+                size={48}
+                color={palette.textSecondary}
+              />
+              <Text
+                style={[styles.emptyText, { color: palette.textSecondary }]}
+              >
                 {search ? "No matching users found" : "No other users yet"}
               </Text>
             </View>
@@ -241,20 +317,31 @@ export default function ChatsScreen() {
           )}
           ListEmptyComponent={
             <View style={styles.empty}>
-              <Ionicons name="chatbubbles-outline" size={48} color={palette.textSecondary} />
-              <Text style={[styles.emptyText, { color: palette.textSecondary }]}>
+              <Ionicons
+                name="chatbubbles-outline"
+                size={48}
+                color={palette.textSecondary}
+              />
+              <Text
+                style={[styles.emptyText, { color: palette.textSecondary }]}
+              >
                 {search
                   ? "No matching conversations found"
                   : activeTab === "unread"
-                  ? "No unread messages"
-                  : "No conversations yet"}
+                    ? "No unread messages"
+                    : "No conversations yet"}
               </Text>
               {!search && activeTab === "all" && (
                 <TouchableOpacity
-                  style={[styles.startChatBtn, { backgroundColor: Colors.primary }]}
+                  style={[
+                    styles.startChatBtn,
+                    { backgroundColor: Colors.primary },
+                  ]}
                   onPress={() => setActiveTab("people")}
                 >
-                  <Text style={styles.startChatBtnText}>Find People to Chat</Text>
+                  <Text style={styles.startChatBtnText}>
+                    Find People to Chat
+                  </Text>
                 </TouchableOpacity>
               )}
             </View>

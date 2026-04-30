@@ -1,19 +1,20 @@
 import { authApi } from "@/src/services/api";
+import socket from "@/src/socket";
 import { useAppTheme } from "@/src/theme/app-theme";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import React, { useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { Colors } from "../../constants/theme";
 
@@ -25,15 +26,20 @@ export default function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
-
   const handleLogin = async () => {
     if (!email || !password) {
       Alert.alert("Error", "Please fill in all fields");
       return;
     }
+
     setLoading(true);
+
     try {
-      await authApi.login({ email, password });
+      const res = await authApi.login({ email, password });
+
+      // 🔥 IMPORTANT: register socket
+      socket.emit("register", res.id);
+
       router.replace("/(tabs)");
     } catch (error) {
       const message =
@@ -45,7 +51,10 @@ export default function LoginScreen() {
   };
 
   return (
-    <KeyboardAvoidingView style={[styles.container, { backgroundColor: palette.background }]} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+    <KeyboardAvoidingView
+      style={[styles.container, { backgroundColor: palette.background }]}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+    >
       <ScrollView
         style={{ backgroundColor: palette.background }}
         contentContainerStyle={styles.scroll}
@@ -53,11 +62,15 @@ export default function LoginScreen() {
       >
         <View style={styles.content}>
           <View style={styles.welcomeSection}>
-            <Text style={[styles.title, { color: palette.text }]}>Welcome!</Text>
+            <Text style={[styles.title, { color: palette.text }]}>
+              Welcome!
+            </Text>
           </View>
 
           <View style={styles.form}>
-            <Text style={[styles.label, { color: palette.text }]}>Email address</Text>
+            <Text style={[styles.label, { color: palette.text }]}>
+              Email address
+            </Text>
             <TextInput
               style={[
                 styles.input,
@@ -75,7 +88,9 @@ export default function LoginScreen() {
               autoCapitalize="none"
             />
 
-            <Text style={[styles.label, { color: palette.text }]}>Password</Text>
+            <Text style={[styles.label, { color: palette.text }]}>
+              Password
+            </Text>
             <View
               style={[
                 styles.passwordContainer,
@@ -94,25 +109,32 @@ export default function LoginScreen() {
                 secureTextEntry={!showPassword}
               />
               <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
-                <Ionicons 
-                  name={showPassword ? "eye-off" : "eye"} 
-                  size={20} 
-                  color={palette.textMuted} 
+                <Ionicons
+                  name={showPassword ? "eye-off" : "eye"}
+                  size={20}
+                  color={palette.textMuted}
                 />
               </TouchableOpacity>
             </View>
 
             <View style={styles.optionsRow}>
-              <TouchableOpacity 
-                style={styles.checkboxRow} 
+              <TouchableOpacity
+                style={styles.checkboxRow}
                 onPress={() => setRememberMe(!rememberMe)}
               >
-                <View style={[styles.checkbox, rememberMe && styles.checkboxChecked]}>
+                <View
+                  style={[
+                    styles.checkbox,
+                    rememberMe && styles.checkboxChecked,
+                  ]}
+                >
                   {rememberMe && (
                     <Ionicons name="checkmark" size={12} color="#fff" />
                   )}
                 </View>
-                <Text style={[styles.checkboxLabel, { color: palette.text }]}>Remember me</Text>
+                <Text style={[styles.checkboxLabel, { color: palette.text }]}>
+                  Remember me
+                </Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.forgotPassword}>
                 <Text style={styles.forgotText}>Forget password?</Text>
@@ -132,7 +154,9 @@ export default function LoginScreen() {
             </TouchableOpacity>
 
             <View style={styles.dividerSection}>
-              <Text style={[styles.orText, { color: palette.textSecondary }]}>Or Continue with Facebook and Google</Text>
+              <Text style={[styles.orText, { color: palette.textSecondary }]}>
+                Or Continue with Facebook and Google
+              </Text>
             </View>
 
             <TouchableOpacity style={styles.facebookButton}>
@@ -140,7 +164,11 @@ export default function LoginScreen() {
                 <View style={styles.facebookIcon}>
                   <Text style={styles.facebookLogo}>f</Text>
                 </View>
-                <Text style={[styles.socialButtonText, { color: palette.text }]}>Continue with Facebook</Text>
+                <Text
+                  style={[styles.socialButtonText, { color: palette.text }]}
+                >
+                  Continue with Facebook
+                </Text>
               </View>
             </TouchableOpacity>
 
@@ -149,7 +177,11 @@ export default function LoginScreen() {
                 <View style={styles.googleIcon}>
                   <Text style={styles.googleLogo}>G</Text>
                 </View>
-                <Text style={[styles.googleButtonText, { color: palette.text }]}>Continue with Google</Text>
+                <Text
+                  style={[styles.googleButtonText, { color: palette.text }]}
+                >
+                  Continue with Google
+                </Text>
               </View>
             </TouchableOpacity>
 
@@ -157,8 +189,11 @@ export default function LoginScreen() {
               style={styles.signUpButton}
               onPress={() => router.push("/auth/register")}
             >
-              <Text style={[styles.signUpText, { color: palette.textSecondary }]}>
-                Don&apos;t have an account? <Text style={styles.signUpLink}>Sign up</Text>
+              <Text
+                style={[styles.signUpText, { color: palette.textSecondary }]}
+              >
+                Don&apos;t have an account?{" "}
+                <Text style={styles.signUpLink}>Sign up</Text>
               </Text>
             </TouchableOpacity>
           </View>

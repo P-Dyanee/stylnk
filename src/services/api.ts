@@ -39,6 +39,8 @@ const resolveBaseUrl = () => {
 
 export const API_BASE_URL = resolveBaseUrl();
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 export type AuthUser = {
   id: string;
   fullName: string;
@@ -90,6 +92,27 @@ export type DirectChatResult = {
   name: string;
 };
 
+export type CallListItem = {
+  id: string;
+  name: string;
+  peerId: string;
+  avatar: string | null;
+  type: "incoming" | "outgoing" | "missed";
+  callType: "audio" | "video";
+  duration: string | null;
+  time: string;
+  createdAt: string;
+};
+
+export type LogCallPayload = {
+  recipientId: string;
+  callType: "audio" | "video";
+  status: "incoming" | "outgoing" | "missed";
+  duration?: string;
+};
+
+// ─── Core request helper ──────────────────────────────────────────────────────
+
 const request = async <T>(
   path: string,
   options: RequestInit = {},
@@ -130,8 +153,15 @@ const request = async <T>(
     throw new Error(message);
   }
 
+  // 204 No Content — nothing to parse
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
   return response.json();
 };
+
+// ─── API services ─────────────────────────────────────────────────────────────
 
 export const authApi = {
   async register(input: { fullName: string; email: string; password: string }) {
@@ -203,6 +233,12 @@ export const userApi = {
   },
 };
 
+export const userStatsApi = {
+  getStats() {
+    return request<{ chats: number; groups: number; calls: number }>("/me/stats", {}, true);
+  },
+};
+
 export const composeApi = {
   startDirectChat(recipientId: string) {
     return request<DirectChatResult>(
@@ -215,6 +251,31 @@ export const composeApi = {
     );
   },
 };
+
+export const callApi = {
+  listCalls() {
+    return request<CallListItem[]>("/calls", {}, true);
+  },
+  logCall(payload: LogCallPayload) {
+    return request<{ id: string }>(
+      "/calls",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+      true,
+    );
+  },
+  deleteCall(callId: string) {
+    return request<void>(
+      `/calls/${callId}`,
+      { method: "DELETE" },
+      true,
+    );
+  },
+};
+
+// ─── Auth storage ─────────────────────────────────────────────────────────────
 
 export const authStorage = {
   async saveSession(data: AuthResponse) {

@@ -1,4 +1,4 @@
-import { MOCK_CHATS } from "@/constants/mockData";
+﻿import { MOCK_CHATS } from "@/constants/mockData";
 import {
     BorderRadius,
     Colors,
@@ -10,7 +10,7 @@ import { authStorage, chatApi } from "@/src/services/api";
 import { useAppTheme } from "@/src/theme/app-theme";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
     FlatList,
     KeyboardAvoidingView,
@@ -205,11 +205,27 @@ export default function ChatScreen() {
         <View style={styles.headerActions}>
           <TouchableOpacity
             style={[styles.actionBtn, { backgroundColor: palette.primarySurface }]}
+            onPress={() => {
+              if (id) {
+                router.push({
+                  pathname: "/call/[id]",
+                  params: { id, name: name ?? chat?.name ?? "Unknown", type: "audio" },
+                });
+              }
+            }}
           >
             <Ionicons name="call-outline" size={20} color={Colors.primary} />
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.actionBtn, { backgroundColor: palette.primarySurface }]}
+            onPress={() => {
+              if (id) {
+                router.push({
+                  pathname: "/call/[id]",
+                  params: { id, name: name ?? chat?.name ?? "Unknown", type: "video" },
+                });
+              }
+            }}
           >
             <Ionicons name="videocam-outline" size={20} color={Colors.primary} />
           </TouchableOpacity>
@@ -428,3 +444,4 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 });
+
