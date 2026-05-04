@@ -1,0 +1,66 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                          String       @id @default(cuid())
+  fullName                    String
+  email                       String       @unique
+  passwordHash                String
+  avatarUrl                   String?
+  createdAt                   DateTime     @default(now())
+  Call_Call_callerIdToUser    Call[]       @relation("Call_callerIdToUser")
+  Call_Call_recipientIdToUser Call[]       @relation("Call_recipientIdToUser")
+  memberships                 ChatMember[]
+  messages                    Message[]
+}
+
+model Chat {
+  id        String       @id @default(cuid())
+  name      String
+  isGroup   Boolean      @default(false)
+  createdAt DateTime     @default(now())
+  members   ChatMember[]
+  messages  Message[]
+}
+
+model ChatMember {
+  id     String @id @default(cuid())
+  chatId String
+  userId String
+  chat   Chat   @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([chatId, userId])
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  chatId    String
+  senderId  String
+  text      String
+  createdAt DateTime @default(now())
+  chat      Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  sender    User     @relation(fields: [senderId], references: [id], onDelete: Cascade)
+}
+
+model Call {
+  id                          String   @id @default(dbgenerated("(gen_random_uuid())::text"))
+  callerId                    String
+  recipientId                 String
+  callType                    String   @default("audio")
+  status                      String   @default("missed")
+  duration                    String?
+  createdAt                   DateTime @default(now())
+  User_Call_callerIdToUser    User     @relation("Call_callerIdToUser", fields: [callerId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  User_Call_recipientIdToUser User     @relation("Call_recipientIdToUser", fields: [recipientId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([callerId])
+  @@index([createdAt(sort: Desc)])
+  @@index([recipientId])
+}
