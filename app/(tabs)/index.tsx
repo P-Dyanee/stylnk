@@ -24,10 +24,13 @@ import {
   type ChatListItem,
   type DirectoryUser,
 } from "../../src/services/api";
+import StyLnkLogo from "../../components/StyLnkLogo";
 
 type ConversationListItem = {
   id: string;
   name: string;
+  peerId?: string | null;
+  peerSocketId?: string | null;
   lastMessage: string;
   time: string;
   unread: number;
@@ -38,6 +41,8 @@ type ConversationListItem = {
 const toConversationItem = (chat: ChatListItem): ConversationListItem => ({
   id: chat.id,
   name: chat.name,
+  peerId: chat.peerId,
+  peerSocketId: chat.peerSocketId,
   lastMessage: chat.lastMessage,
   time: chat.time,
   unread: chat.unreadCount,
@@ -156,8 +161,16 @@ export default function ChatsScreen() {
       />
 
       {/* Header */}
-      <View style={[styles.header, { borderBottomColor: palette.border }]}>
-        <Text style={[styles.chatsText, { color: palette.text }]}>Chats</Text>
+      <View
+        style={[
+          styles.header,
+          {
+            backgroundColor: Colors.brandNavy,
+            borderBottomColor: Colors.brandBlue,
+          },
+        ]}
+      >
+        <StyLnkLogo compact showTagline={false} size="sm" />
         <View style={styles.headerRight}>
           <TouchableOpacity
             style={styles.headerIcon}
@@ -166,7 +179,7 @@ export default function ChatsScreen() {
             <Ionicons
               name="add-circle-outline"
               size={24}
-              color={palette.text}
+              color={Colors.brandCyan}
             />
           </TouchableOpacity>
         </View>
@@ -176,7 +189,10 @@ export default function ChatsScreen() {
       <View
         style={[
           styles.tabsContainer,
-          { borderBottomColor: palette.border, backgroundColor: palette.card },
+          {
+            borderBottomColor: Colors.brandBlue,
+            backgroundColor: Colors.brandNavy,
+          },
         ]}
       >
         {(["all", "chats", "unread", "people"] as const).map((tab) => (
@@ -190,7 +206,7 @@ export default function ChatsScreen() {
                 styles.tabText,
                 {
                   color:
-                    activeTab === tab ? Colors.primary : palette.textSecondary,
+                    activeTab === tab ? Colors.brandCyan : Colors.brandPale,
                 },
                 activeTab === tab && styles.activeTabText,
               ]}
@@ -201,7 +217,7 @@ export default function ChatsScreen() {
               <View
                 style={[
                   styles.activeTabIndicator,
-                  { backgroundColor: Colors.primary },
+                  { backgroundColor: Colors.brandTeal },
                 ]}
               />
             )}
@@ -365,7 +381,6 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderBottomWidth: 1,
   },
-  chatsText: { fontSize: 24, fontWeight: "bold" },
   headerRight: { flexDirection: "row", gap: 12 },
   headerIcon: { padding: 4 },
   tabsContainer: {

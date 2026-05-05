@@ -51,12 +51,18 @@ export default function NewCallScreen() {
   };
 
   const startCall = (user: DirectoryUser, type: "audio" | "video") => {
+    if (!user.socketId) {
+      return;
+    }
+
     router.push({
       pathname: "/call/[id]",
       params: {
         id: user.id,
         name: user.fullName,
+        socketId: user.socketId,
         type,
+        direction: "outgoing",
       },
     });
   };
@@ -83,19 +89,29 @@ export default function NewCallScreen() {
           {item.fullName}
         </Text>
         <Text style={[styles.userEmail, { color: palette.textSecondary }]}>
-          {item.email}
+          {item.isOnline ? item.email : `${item.email} - Offline`}
         </Text>
       </View>
       <View style={styles.callButtons}>
         <TouchableOpacity
-          style={[styles.callButton, styles.audioButton]}
+          style={[
+            styles.callButton,
+            styles.audioButton,
+            !item.socketId && styles.callButtonDisabled,
+          ]}
           onPress={() => startCall(item, "audio")}
+          disabled={!item.socketId}
         >
           <Ionicons name="call" size={20} color={Colors.white} />
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.callButton, styles.videoButton]}
+          style={[
+            styles.callButton,
+            styles.videoButton,
+            !item.socketId && styles.callButtonDisabled,
+          ]}
           onPress={() => startCall(item, "video")}
+          disabled={!item.socketId}
         >
           <Ionicons name="videocam" size={20} color={Colors.white} />
         </TouchableOpacity>
@@ -351,5 +367,8 @@ const styles = StyleSheet.create({
   },
   videoButton: {
     backgroundColor: Colors.primary,
+  },
+  callButtonDisabled: {
+    opacity: 0.35,
   },
 });

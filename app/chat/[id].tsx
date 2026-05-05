@@ -95,7 +95,12 @@ function MessageBubble({
 export default function ChatScreen() {
   const router = useRouter();
   const { palette } = useAppTheme();
-  const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
+  const { id, name, peerId, peerSocketId } = useLocalSearchParams<{
+    id: string;
+    name?: string;
+    peerId?: string;
+    peerSocketId?: string;
+  }>();
   const chat = MOCK_CHATS.find((c) => c.id === id);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -206,10 +211,16 @@ export default function ChatScreen() {
           <TouchableOpacity
             style={[styles.actionBtn, { backgroundColor: palette.primarySurface }]}
             onPress={() => {
-              if (id) {
+              if (peerId && peerSocketId) {
                 router.push({
                   pathname: "/call/[id]",
-                  params: { id, name: name ?? chat?.name ?? "Unknown", type: "audio" },
+                  params: {
+                    id: peerId,
+                    socketId: peerSocketId,
+                    name: name ?? chat?.name ?? "Unknown",
+                    type: "audio",
+                    direction: "outgoing",
+                  },
                 });
               }
             }}
@@ -219,10 +230,16 @@ export default function ChatScreen() {
           <TouchableOpacity
             style={[styles.actionBtn, { backgroundColor: palette.primarySurface }]}
             onPress={() => {
-              if (id) {
+              if (peerId && peerSocketId) {
                 router.push({
                   pathname: "/call/[id]",
-                  params: { id, name: name ?? chat?.name ?? "Unknown", type: "video" },
+                  params: {
+                    id: peerId,
+                    socketId: peerSocketId,
+                    name: name ?? chat?.name ?? "Unknown",
+                    type: "video",
+                    direction: "outgoing",
+                  },
                 });
               }
             }}

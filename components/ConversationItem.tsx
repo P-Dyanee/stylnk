@@ -8,6 +8,8 @@ import { Colors } from "../constants/theme";
 type Props = {
   id: string;
   name: string;
+  peerId?: string | null;
+  peerSocketId?: string | null;
   lastMessage: string;
   time: string;
   unread: number;
@@ -61,6 +63,8 @@ function HighlightedText({
 export default function ConversationItem({
   id,
   name,
+  peerId,
+  peerSocketId,
   lastMessage,
   time,
   unread,
@@ -84,7 +88,12 @@ export default function ConversationItem({
       onPress={() =>
         router.push({
           pathname: "/chat/[id]",
-          params: { id, name },
+          params: {
+            id,
+            name,
+            peerId: peerId ?? "",
+            peerSocketId: peerSocketId ?? "",
+          },
         })
       }
       activeOpacity={0.7}

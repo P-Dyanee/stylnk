@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import cors from "cors";
+import { randomUUID } from "crypto";
 import "dotenv/config";
 import express from "express";
 import http from "http";
@@ -23,6 +24,19 @@ const io = new Server(server, {
 
 // userId → socketId map
 const users: Record<string, string> = {};
+const socketUsers: Record<string, string> = {};
+const activeCalls: Record<
+  string,
+  {
+    callerUserId: string | null;
+    callerSocketId: string;
+    recipientUserId: string | null;
+    recipientSocketId: string;
+    callType: "audio" | "video";
+    status: "ringing" | "connected" | "ended";
+    createdAt: Date;
+  }
+> = {};
 
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
@@ -241,7 +255,7 @@ app.get("/me/stats", auth, async (req: AuthRequest, res) => {
 app.get("/users", auth, async (req: AuthRequest, res) => {
   const currentUserId = req.userId!;
 
-  const users = await prisma.user.findMany({
+  const directoryUsers = await prisma.user.findMany({
     where: {
       id: { not: currentUserId },
     },
@@ -254,7 +268,13 @@ app.get("/users", auth, async (req: AuthRequest, res) => {
     },
   });
 
-  res.json(users);
+  res.json(
+    directoryUsers.map((user) => ({
+      ...user,
+      socketId: users[user.id] ?? null,
+      isOnline: Boolean(users[user.id]),
+    })),
+  );
 });
 
 app.get("/chats", auth, async (req: AuthRequest, res) => {
@@ -286,7 +306,9 @@ app.get("/chats", auth, async (req: AuthRequest, res) => {
         ? m.chat.name
         : oneToOnePeer?.fullName || m.chat.name,
       isGroup: m.chat.isGroup,
-      isOnline: false,
+      peerId: oneToOnePeer?.id ?? null,
+      peerSocketId: oneToOnePeer ? users[oneToOnePeer.id] ?? null : null,
+      isOnline: oneToOnePeer ? Boolean(users[oneToOnePeer.id]) : false,
       unreadCount: 0,
       lastMessage: last?.text || "No messages yet",
       time: last ? toTime(last.createdAt) : "",
@@ -526,8 +548,15 @@ app.post("/calls", auth, async (req: AuthRequest, res) => {
     return res.status(404).json({ message: "Recipient not found" });
   }
 
+  const isReceiverLoggedCall = status === "incoming" || status === "missed";
   const call = await prisma.call.create({
-    data: { callerId, recipientId, callType, status, duration },
+    data: {
+      callerId: isReceiverLoggedCall ? recipientId : callerId,
+      recipientId: isReceiverLoggedCall ? callerId : recipientId,
+      callType,
+      status,
+      duration,
+    },
   });
 
   res.status(201).json({
@@ -596,41 +625,111 @@ io.on("connection", (socket) => {
   // Register logged-in user
   socket.on("register", (userId: string) => {
     users[userId] = socket.id;
+    socketUsers[socket.id] = userId;
     console.log("Registered:", userId, socket.id);
   });
 
   // ─── CALL USER ─────────────────────────────
-  socket.on("call-user", ({ toUserId, offer }) => {
-    const targetSocket = users[toUserId];
+  socket.on("call-user", async ({ toSocketId, offer, callType }) => {
+    const targetSocket = typeof toSocketId === "string" ? toSocketId : null;
+    const normalizedCallType = callType === "video" ? "video" : "audio";
+    const fromUserId = socketUsers[socket.id] ?? null;
+    const toUserId = targetSocket ? socketUsers[targetSocket] ?? null : null;
 
-    if (!targetSocket) {
-      console.log("User not online:", toUserId);
+    if (!targetSocket || !io.sockets.sockets.has(targetSocket)) {
+      socket.emit("call-unavailable", {
+        message: "User is not online",
+      });
       return;
     }
 
+    const callId = randomUUID();
+    const caller = fromUserId
+      ? await prisma.user.findUnique({
+          where: { id: fromUserId },
+          select: { fullName: true },
+        })
+      : null;
+
+    activeCalls[callId] = {
+      callerUserId: fromUserId,
+      callerSocketId: socket.id,
+      recipientUserId: toUserId,
+      recipientSocketId: targetSocket,
+      callType: normalizedCallType,
+      status: "ringing",
+      createdAt: new Date(),
+    };
+
     io.to(targetSocket).emit("incoming-call", {
-      fromUserId: socket.id,
+      callId,
+      fromSocketId: socket.id,
+      fromUserId,
+      fromName: caller?.fullName ?? "Unknown caller",
+      callType: normalizedCallType,
       offer,
+    });
+
+    socket.emit("call-ringing", {
+      callId,
+      toSocketId: targetSocket,
+      toUserId,
     });
   });
 
   // ─── ANSWER CALL ───────────────────────────
-  socket.on("answer-call", ({ toSocketId, answer }) => {
-    io.to(toSocketId).emit("call-answered", { answer });
+  socket.on("answer-call", ({ callId, toSocketId, answer }) => {
+    if (callId && activeCalls[callId]) {
+      activeCalls[callId].status = "connected";
+    }
+    io.to(toSocketId).emit("call-answered", {
+      callId,
+      fromSocketId: socket.id,
+      answer,
+    });
   });
 
   // ─── ICE CANDIDATES ────────────────────────
-  socket.on("ice-candidate", ({ toSocketId, candidate }) => {
-    io.to(toSocketId).emit("ice-candidate", { candidate });
+  socket.on("ice-candidate", ({ callId, toSocketId, candidate }) => {
+    io.to(toSocketId).emit("ice-candidate", {
+      callId,
+      fromSocketId: socket.id,
+      candidate,
+    });
   });
 
   // ─── END CALL ──────────────────────────────
-  socket.on("end-call", ({ toSocketId }) => {
-    io.to(toSocketId).emit("call-ended");
+  socket.on("end-call", ({ callId, toSocketId, reason }) => {
+    if (callId && activeCalls[callId]) {
+      activeCalls[callId].status = "ended";
+      delete activeCalls[callId];
+    }
+    io.to(toSocketId).emit("call-ended", {
+      callId,
+      fromSocketId: socket.id,
+      reason: reason || "ended",
+    });
   });
 
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
+
+    for (const [callId, call] of Object.entries(activeCalls)) {
+      if (call.callerSocketId === socket.id || call.recipientSocketId === socket.id) {
+        const otherSocketId =
+          call.callerSocketId === socket.id
+            ? call.recipientSocketId
+            : call.callerSocketId;
+        io.to(otherSocketId).emit("call-ended", {
+          callId,
+          fromSocketId: socket.id,
+          reason: "disconnected",
+        });
+        delete activeCalls[callId];
+      }
+    }
+
+    delete socketUsers[socket.id];
 
     // cleanup mapping
     for (const userId in users) {

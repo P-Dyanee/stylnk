@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { useRouter } from "expo-router";
-import { webrtcService } from "../services/webrtc";
+import { webrtcService, type CallEvent } from "../services/webrtc";
 import IncomingCallModal from "../../components/IncomingCallModal";
 
 interface CallerInfo {
   id: string;
+  socketId: string;
   name: string;
   type: "audio" | "video";
 }
@@ -15,64 +16,64 @@ export function useCallManager() {
   const [showIncomingModal, setShowIncomingModal] = useState(false);
 
   useEffect(() => {
-    // Set up WebRTC event listeners
-    const handleCallEvent = (event: any) => {
+    const handleCallEvent = (event: CallEvent) => {
       switch (event.type) {
         case "incoming":
-          // Show incoming call modal
           setIncomingCall({
-            id: event.data.fromUserId,
-            name: event.data.fromUserId, // TODO: Get user name from API
-            type: "audio", // TODO: Get call type from event data
+            id: event.data.fromUserId ?? event.data.fromSocketId,
+            socketId: event.data.fromSocketId,
+            name: event.data.fromName ?? "Unknown caller",
+            type: event.data.callType,
           });
           setShowIncomingModal(true);
           break;
 
         case "connected":
-          // Navigate to call screen when call is connected
-          if (incomingCall) {
-            router.push({
-              pathname: "/call/[id]",
-              params: {
-                id: incomingCall.id,
-                name: incomingCall.name,
-                type: incomingCall.type,
-              },
-            });
-            setShowIncomingModal(false);
-          }
+          setIncomingCall((currentIncomingCall) => {
+            if (currentIncomingCall) {
+              router.push({
+                pathname: "/call/[id]",
+                params: {
+                  id: currentIncomingCall.id,
+                  socketId: currentIncomingCall.socketId,
+                  name: currentIncomingCall.name,
+                  type: currentIncomingCall.type,
+                  direction: "incoming",
+                },
+              });
+            }
+            return null;
+          });
+          setShowIncomingModal(false);
           break;
 
         case "ended":
-          // Hide modal and go back when call ends
-          setShowIncomingModal(false);
-          setIncomingCall(null);
-          break;
-
         case "error":
-          // Handle call errors
           setShowIncomingModal(false);
           setIncomingCall(null);
           break;
       }
     };
 
-    webrtcService.addEventListener((event) => handleCallEvent(event));
-
-    // Connect to socket when hook is mounted
+    webrtcService.addEventListener(handleCallEvent);
     webrtcService.connect();
 
     return () => {
-      webrtcService.removeEventListener((event) => handleCallEvent(event));
+      webrtcService.removeEventListener(handleCallEvent);
     };
-  }, [router, incomingCall]);
+  }, [router]);
 
-  const handleAcceptCall = () => {
-    // Call will be answered in the modal component
-    // Navigation happens in the connected event
+  const handleAcceptCall = async () => {
+    try {
+      await webrtcService.answerCall();
+    } catch {
+      setShowIncomingModal(false);
+      setIncomingCall(null);
+    }
   };
 
   const handleRejectCall = () => {
+    webrtcService.rejectCall();
     setShowIncomingModal(false);
     setIncomingCall(null);
   };

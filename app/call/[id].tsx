@@ -1,6 +1,11 @@
 import { BorderRadius, Colors, Spacing, Typography } from "@/constants/theme";
 import { callApi } from "@/src/services/api";
-import { webrtcService, RTCView } from "@/src/services/webrtc";
+import {
+  webrtcService,
+  RTCView,
+  type CallEvent,
+  type CallStatus,
+} from "@/src/services/webrtc";
 import { useAppTheme } from "@/src/theme/app-theme";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -16,55 +21,63 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-type CallStatus = "connecting" | "connected" | "ended" | "error";
-
 export default function CallScreen() {
   const router = useRouter();
   const { palette } = useAppTheme();
-  const { id, name, type = "audio" } = useLocalSearchParams<{ 
+  const { id, name, socketId, type = "audio", direction = "outgoing" } = useLocalSearchParams<{ 
     id: string; 
     name?: string; 
-    type?: "audio" | "video" 
+    socketId?: string;
+    type?: "audio" | "video";
+    direction?: "incoming" | "outgoing";
   }>();
   
-  const [status, setStatus] = useState<CallStatus>("connecting");
+  const [status, setStatus] = useState<CallStatus>(
+    direction === "incoming" ? "connected" : "calling",
+  );
   const [isAudioEnabled, setIsAudioEnabled] = useState(true);
   const [isVideoEnabled, setIsVideoEnabled] = useState(type === "video");
   const [duration, setDuration] = useState(0);
   const [localStream, setLocalStream] = useState<any>(null);
   const [remoteStream, setRemoteStream] = useState<any>(null);
-  const startTimeRef = useRef<number>(Date.now());
+  const startTimeRef = useRef<number | null>(null);
   const intervalRef = useRef<any>(null);
+  const loggedCallRef = useRef(false);
 
   useEffect(() => {
-    // Initialize call
     const initializeCall = async () => {
       try {
-        // Set up event listeners
         webrtcService.addEventListener(handleCallEvent);
-        
-        // Start the call
-        await webrtcService.startCall(id, type as "audio" | "video");
-        
-        // Get local stream
+
+        if (direction === "outgoing") {
+          if (!socketId) {
+            throw new Error("User is offline or missing a socket connection.");
+          }
+          await webrtcService.startCall({
+            recipientId: id,
+            toSocketId: socketId,
+            name,
+            type: type as "audio" | "video",
+          });
+        }
+
         const stream = webrtcService.getLocalStream();
         if (stream && (stream as any).toURL) {
           setLocalStream((stream as any).toURL());
         }
-        
+
+        const remote = webrtcService.getRemoteStream();
+        if (remote && (remote as any).toURL) {
+          setRemoteStream((remote as any).toURL());
+        }
       } catch (error) {
         console.error("Failed to initialize call:", error);
-        setStatus("error");
+        setStatus("failed");
         Alert.alert("Call Error", "Failed to start call. Please try again.");
       }
     };
 
     initializeCall();
-
-    // Duration timer
-    intervalRef.current = setInterval(() => {
-      setDuration(Math.floor((Date.now() - startTimeRef.current) / 1000));
-    }, 1000);
 
     return () => {
       if (intervalRef.current) {
@@ -73,22 +86,63 @@ export default function CallScreen() {
       webrtcService.removeEventListener(handleCallEvent);
       webrtcService.endCall();
     };
-  }, [id, type]);
+  }, [direction, id, name, socketId, type]);
 
-  const handleCallEvent = (event: any) => {
+  useEffect(() => {
+    if (status !== "connected") {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      return;
+    }
+
+    if (!startTimeRef.current) {
+      startTimeRef.current = Date.now();
+    }
+
+    intervalRef.current = setInterval(() => {
+      if (!startTimeRef.current) return;
+      setDuration(Math.floor((Date.now() - startTimeRef.current) / 1000));
+    }, 1000);
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, [status]);
+
+  const handleCallEvent = (event: CallEvent) => {
     switch (event.type) {
+      case "status":
+        setStatus(event.data.status);
+        break;
+      case "ringing":
+        setStatus("ringing");
+        break;
       case "connected":
         setStatus("connected");
+        if (event.data?.localStream && (event.data.localStream as any).toURL) {
+          setLocalStream((event.data.localStream as any).toURL());
+        }
         if (event.data?.remoteStream && (event.data.remoteStream as any).toURL) {
           setRemoteStream((event.data.remoteStream as any).toURL());
         }
         break;
+      case "remote-stream":
+        if ((event.data.remoteStream as any).toURL) {
+          setRemoteStream((event.data.remoteStream as any).toURL());
+        }
+        break;
       case "ended":
+        logCallHistory();
         setStatus("ended");
         setTimeout(() => router.back(), 1000);
         break;
       case "error":
-        setStatus("error");
+        setStatus("failed");
         Alert.alert("Call Error", "An error occurred during the call.");
         break;
     }
@@ -104,15 +158,20 @@ export default function CallScreen() {
     setIsVideoEnabled(enabled);
   };
 
-  const endCall = () => {
-    // Log call to history
+  const logCallHistory = () => {
+    if (loggedCallRef.current) return;
+    loggedCallRef.current = true;
+
     callApi.logCall({
       recipientId: id,
       callType: type as "audio" | "video",
-      status: "outgoing",
+      status: direction === "incoming" ? "incoming" : "outgoing",
       duration: formatDuration(duration),
     }).catch(console.error);
+  };
 
+  const endCall = () => {
+    logCallHistory();
     webrtcService.endCall();
     router.back();
   };
@@ -175,10 +234,11 @@ export default function CallScreen() {
             {name || "Unknown"}
           </Text>
           <Text style={[styles.callStatus, { color: palette.textSecondary }]}>
-            {status === "connecting" && "Connecting..."}
+            {status === "calling" && "Calling..."}
+            {status === "ringing" && "Ringing..."}
             {status === "connected" && formatDuration(duration)}
             {status === "ended" && "Call ended"}
-            {status === "error" && "Call failed"}
+            {status === "failed" && "Call failed"}
           </Text>
         </View>
       </View>
@@ -238,11 +298,11 @@ export default function CallScreen() {
       </View>
 
       {/* Loading overlay */}
-      {status === "connecting" && (
+      {(status === "calling" || status === "ringing") && (
         <View style={styles.loadingOverlay}>
           <ActivityIndicator size="large" color={Colors.primary} />
           <Text style={[styles.loadingText, { color: palette.text }]}>
-            Connecting...
+            {status === "calling" ? "Calling..." : "Ringing..."}
           </Text>
         </View>
       )}

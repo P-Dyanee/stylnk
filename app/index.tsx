@@ -3,6 +3,7 @@ import { Redirect } from "expo-router";
 import { ActivityIndicator, View } from "react-native";
 import { useEffect, useState } from "react";
 import { Colors } from "@/constants/theme";
+import StyLnkLogo from "@/components/StyLnkLogo";
 
 export default function RootIndex() {
   const [targetRoute, setTargetRoute] = useState<"/auth/login" | "/(tabs)" | null>(
@@ -25,10 +26,12 @@ export default function RootIndex() {
           flex: 1,
           alignItems: "center",
           justifyContent: "center",
-          backgroundColor: Colors.background,
+          backgroundColor: Colors.brandNavy,
+          gap: 28,
         }}
       >
-        <ActivityIndicator color={Colors.primary} />
+        <StyLnkLogo size="md" />
+        <ActivityIndicator color={Colors.brandCyan} />
       </View>
     );
   }

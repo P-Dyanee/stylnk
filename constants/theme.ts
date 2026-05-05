@@ -1,11 +1,24 @@
 import { Platform } from "react-native";
 
-const tintColorLight = "#7360F2"; // Updated to Viber-like purple
+const brandNavy = "#1E3A6E";
+const brandBlue = "#1A5FA8";
+const brandTeal = "#3ECFB2";
+const brandCyan = "#5ECFEA";
+const brandPale = "#A8D8EA";
+
+const tintColorLight = brandBlue;
 const tintColorDark = "#fff";
 
 export const Colors = {
-  primary: "#7360F2", // Main brand color
-  primaryDark: "#5A4BD1", // Pressed/active state
+  brandNavy,
+  brandBlue,
+  brandTeal,
+  brandCyan,
+  brandPale,
+  primary: brandBlue,
+  primaryDark: brandNavy,
+  accent: brandTeal,
+  accentCyan: brandCyan,
   danger: "#FF4444", // Errors
   success: "#4CAF50", // Online indicator
   online: "#4CAF50",
@@ -15,7 +28,7 @@ export const Colors = {
   textMuted: "#687076",
   background: "#fff",
   surface: "#F5F5F5",
-  primarySurface: "#F1EEFF",
+  primarySurface: "#E7F6FB",
   border: "#E0E0E0",
   divider: "#ECEFF1",
 

@@ -1,5 +1,4 @@
 import { useAppTheme } from "@/src/theme/app-theme";
-import { webrtcService } from "@/src/services/webrtc";
 import { callApi } from "@/src/services/api";
 import { Ionicons } from "@expo/vector-icons";
 import React, { useEffect, useState } from "react";
@@ -17,10 +16,11 @@ interface IncomingCallModalProps {
   visible: boolean;
   callerInfo: {
     id: string;
+    socketId?: string;
     name: string;
     type: "audio" | "video";
   } | null;
-  onAccept: () => void;
+  onAccept: () => void | Promise<void>;
   onReject: () => void;
 }
 
@@ -44,8 +44,7 @@ export default function IncomingCallModal({
     
     setIsConnecting(true);
     try {
-      await webrtcService.answerCall();
-      onAccept();
+      await onAccept();
     } catch (error) {
       console.error("Failed to answer call:", error);
       setIsConnecting(false);
@@ -60,8 +59,6 @@ export default function IncomingCallModal({
         callType: callerInfo.type,
         status: "missed",
       }).catch(console.error);
-      
-      webrtcService.rejectCall();
     }
     onReject();
   };

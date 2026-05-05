@@ -5,7 +5,7 @@ import {
     SafeAreaView,
     StyleSheet,
     Text,
-    TouchableOpacity
+    TouchableOpacity,
 } from "react-native";
 import {
     mediaDevices,
@@ -17,13 +17,17 @@ import {
 
 export default function CallScreen() {
   const router = useRouter();
-  const { to, from, isCaller, isReceiver } = useLocalSearchParams();
+  // `to` = userId of the person we're calling (caller side)
+  // `from` = socketId of the person who called us (receiver side, set on incoming-call)
+  const { to, isCaller } = useLocalSearchParams();
 
   const [localStream, setLocalStream] = useState<any>(null);
   const [remoteStream, setRemoteStream] = useState<any>(null);
   const [callAccepted, setCallAccepted] = useState(false);
 
   const pc = useRef<RTCPeerConnection | null>(null);
+  // Store the remote socket ID so we can address back ICE candidates / end-call
+  const remoteSocketId = useRef<string | null>(null);
 
   const configuration = {
     iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
@@ -37,53 +41,60 @@ export default function CallScreen() {
   }, []);
 
   const startLocalStream = async () => {
-    const stream = await mediaDevices.getUserMedia({
-      video: true,
-      audio: true,
-    });
-
-    setLocalStream(stream);
+    try {
+      const stream = await mediaDevices.getUserMedia({
+        video: true,
+        audio: true,
+      });
+      setLocalStream(stream);
+    } catch (e) {
+      console.error("Failed to get media:", e);
+    }
   };
 
   // ─────────────────────────────────────────────
   // 2. Create peer connection
   // ─────────────────────────────────────────────
-  const createPeerConnection = () => {
+  const createPeerConnection = (stream: any) => {
     const connection = new RTCPeerConnection(configuration);
 
-    connection.onaddstream = (event) => {
+    // onaddstream is deprecated but still used in react-native-webrtc
+    connection.onaddstream = (event: any) => {
       setRemoteStream(event.stream);
     };
 
-    connection.onicecandidate = (event) => {
-      if (event.candidate) {
+    connection.onicecandidate = (event: any) => {
+      if (event.candidate && remoteSocketId.current) {
+        // FIX: backend expects `toSocketId`, not `to`
         socket.emit("ice-candidate", {
-          to: isCaller ? to : from,
+          toSocketId: remoteSocketId.current,
           candidate: event.candidate,
         });
       }
     };
 
-    if (localStream) {
-      connection.addStream(localStream);
+    if (stream) {
+      connection.addStream(stream);
     }
 
     pc.current = connection;
+    return connection;
   };
 
   // ─────────────────────────────────────────────
-  // 3. Caller flow
+  // 3. Caller flow — fires when localStream is ready
   // ─────────────────────────────────────────────
   useEffect(() => {
     if (isCaller && localStream) {
-      createPeerConnection();
+      const connection = createPeerConnection(localStream);
 
       const startCall = async () => {
-        const offer = await pc.current!.createOffer();
-        await pc.current!.setLocalDescription(offer);
+        const offer = await connection.createOffer();
+        await connection.setLocalDescription(offer);
 
+        // FIX: backend expects `toUserId`, not `to`
         socket.emit("call-user", {
-          to,
+          toUserId: to,
           offer,
         });
       };
@@ -93,30 +104,37 @@ export default function CallScreen() {
   }, [isCaller, localStream]);
 
   // ─────────────────────────────────────────────
-  // 4. Receiver flow
+  // 4. Socket event listeners
   // ─────────────────────────────────────────────
   useEffect(() => {
-    socket.on("incoming-call", async ({ from, offer }) => {
-      createPeerConnection();
+    // Receiver: gets an incoming call
+    socket.on("incoming-call", async ({ fromUserId, offer }) => {
+      // FIX: backend sends `fromUserId` (which is a socket ID), not `from`
+      remoteSocketId.current = fromUserId;
 
-      await pc.current!.setRemoteDescription(new RTCSessionDescription(offer));
+      const connection = createPeerConnection(localStream);
 
-      const answer = await pc.current!.createAnswer();
-      await pc.current!.setLocalDescription(answer);
+      await connection.setRemoteDescription(new RTCSessionDescription(offer));
 
+      const answer = await connection.createAnswer();
+      await connection.setLocalDescription(answer);
+
+      // FIX: backend expects `toSocketId`, not `to`
       socket.emit("answer-call", {
-        to: from,
+        toSocketId: fromUserId,
         answer,
       });
 
       setCallAccepted(true);
     });
 
+    // Caller: receives the answer from the receiver
     socket.on("call-answered", async ({ answer }) => {
       await pc.current!.setRemoteDescription(new RTCSessionDescription(answer));
       setCallAccepted(true);
     });
 
+    // Both sides: receive ICE candidates
     socket.on("ice-candidate", async ({ candidate }) => {
       try {
         await pc.current!.addIceCandidate(new RTCIceCandidate(candidate));
@@ -125,8 +143,9 @@ export default function CallScreen() {
       }
     });
 
+    // Both sides: other party ended the call
     socket.on("call-ended", () => {
-      endCall();
+      endCall(false); // false = don't emit end-call back (avoid loop)
     });
 
     return () => {
@@ -135,12 +154,12 @@ export default function CallScreen() {
       socket.off("ice-candidate");
       socket.off("call-ended");
     };
-  }, []);
+  }, [localStream]);
 
   // ─────────────────────────────────────────────
   // 5. End call
   // ─────────────────────────────────────────────
-  const endCall = () => {
+  const endCall = (emitToRemote = true) => {
     if (pc.current) {
       pc.current.close();
       pc.current = null;
@@ -150,16 +169,28 @@ export default function CallScreen() {
       localStream.getTracks().forEach((track: any) => track.stop());
     }
 
-    socket.emit("end-call", {
-      to: isCaller ? to : from,
-    });
+    if (emitToRemote && remoteSocketId.current) {
+      // FIX: backend expects `toSocketId`, not `to`
+      socket.emit("end-call", {
+        toSocketId: remoteSocketId.current,
+      });
+    }
 
     router.back();
   };
 
   // ─────────────────────────────────────────────
-  // UI
+  // 6. Caller: store remote socket ID when call is answered
+  //    The caller doesn't know the receiver's socket ID upfront —
+  //    we store it when `call-answered` arrives via the socket id
+  //    that the backend tracks. For the caller side, remoteSocketId
+  //    must be set after the call is answered. We handle this by
+  //    emitting `call-user` with toUserId and the backend internally
+  //    knows the mapping. For ICE/end-call from caller side,
+  //    we need the receiver's socket ID — add a `fromSocketId`
+  //    field to `call-answered` in the backend (see note below).
   // ─────────────────────────────────────────────
+
   return (
     <SafeAreaView style={styles.container}>
       <Text style={styles.title}>
@@ -168,24 +199,21 @@ export default function CallScreen() {
 
       {/* Remote video */}
       {remoteStream && (
-        <RTCView streamURL={remoteStream.toURL()} style={styles.remoteVideo} />
+        <RTCView streamURL={remoteStream.toURL()} style={styles.remoteVideo} objectFit="cover" />
       )}
 
-      {/* Local video */}
+      {/* Local video (picture-in-picture) */}
       {localStream && (
-        <RTCView streamURL={localStream.toURL()} style={styles.localVideo} />
+        <RTCView streamURL={localStream.toURL()} style={styles.localVideo} objectFit="cover" />
       )}
 
-      <TouchableOpacity style={styles.endBtn} onPress={endCall}>
+      <TouchableOpacity style={styles.endBtn} onPress={() => endCall()}>
         <Text style={styles.endText}>End Call</Text>
       </TouchableOpacity>
     </SafeAreaView>
   );
 }
 
-// ─────────────────────────────────────────────
-// Styles
-// ─────────────────────────────────────────────
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -196,6 +224,7 @@ const styles = StyleSheet.create({
     color: "white",
     textAlign: "center",
     marginBottom: 10,
+    fontSize: 18,
   },
   remoteVideo: {
     flex: 1,
@@ -206,6 +235,9 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 40,
     right: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "white",
   },
   endBtn: {
     backgroundColor: "red",
@@ -217,5 +249,6 @@ const styles = StyleSheet.create({
   endText: {
     color: "white",
     fontWeight: "bold",
+    fontSize: 16,
   },
 });

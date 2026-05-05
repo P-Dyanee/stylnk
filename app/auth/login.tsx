@@ -16,6 +16,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import StyLnkLogo from "../../components/StyLnkLogo";
 import { Colors } from "../../constants/theme";
 
 export default function LoginScreen() {
@@ -52,32 +53,31 @@ export default function LoginScreen() {
 
   return (
     <KeyboardAvoidingView
-      style={[styles.container, { backgroundColor: palette.background }]}
+      style={styles.container}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
       <ScrollView
-        style={{ backgroundColor: palette.background }}
+        style={styles.scrollView}
         contentContainerStyle={styles.scroll}
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.content}>
-          <View style={styles.welcomeSection}>
-            <Text style={[styles.title, { color: palette.text }]}>
-              Welcome!
-            </Text>
+          <View style={styles.logoPanel}>
+            <StyLnkLogo size="lg" />
+            <Text style={styles.title}>Welcome back</Text>
           </View>
 
           <View style={styles.form}>
-            <Text style={[styles.label, { color: palette.text }]}>
+            <Text style={styles.label}>
               Email address
             </Text>
             <TextInput
               style={[
                 styles.input,
                 {
-                  backgroundColor: palette.background,
+                  backgroundColor: Colors.white,
                   color: palette.text,
-                  borderColor: palette.border,
+                  borderColor: Colors.brandPale,
                 },
               ]}
               placeholder="Enter your email"
@@ -88,15 +88,15 @@ export default function LoginScreen() {
               autoCapitalize="none"
             />
 
-            <Text style={[styles.label, { color: palette.text }]}>
+            <Text style={styles.label}>
               Password
             </Text>
             <View
               style={[
                 styles.passwordContainer,
                 {
-                  backgroundColor: palette.background,
-                  borderColor: palette.border,
+                  backgroundColor: Colors.white,
+                  borderColor: Colors.brandPale,
                 },
               ]}
             >
@@ -112,7 +112,7 @@ export default function LoginScreen() {
                 <Ionicons
                   name={showPassword ? "eye-off" : "eye"}
                   size={20}
-                  color={palette.textMuted}
+                  color={Colors.brandBlue}
                 />
               </TouchableOpacity>
             </View>
@@ -132,7 +132,7 @@ export default function LoginScreen() {
                     <Ionicons name="checkmark" size={12} color="#fff" />
                   )}
                 </View>
-                <Text style={[styles.checkboxLabel, { color: palette.text }]}>
+                <Text style={styles.checkboxLabel}>
                   Remember me
                 </Text>
               </TouchableOpacity>
@@ -154,7 +154,7 @@ export default function LoginScreen() {
             </TouchableOpacity>
 
             <View style={styles.dividerSection}>
-              <Text style={[styles.orText, { color: palette.textSecondary }]}>
+              <Text style={styles.orText}>
                 Or Continue with Facebook and Google
               </Text>
             </View>
@@ -165,7 +165,7 @@ export default function LoginScreen() {
                   <Text style={styles.facebookLogo}>f</Text>
                 </View>
                 <Text
-                  style={[styles.socialButtonText, { color: palette.text }]}
+                  style={styles.socialButtonText}
                 >
                   Continue with Facebook
                 </Text>
@@ -178,7 +178,7 @@ export default function LoginScreen() {
                   <Text style={styles.googleLogo}>G</Text>
                 </View>
                 <Text
-                  style={[styles.googleButtonText, { color: palette.text }]}
+                  style={styles.googleButtonText}
                 >
                   Continue with Google
                 </Text>
@@ -190,7 +190,7 @@ export default function LoginScreen() {
               onPress={() => router.push("/auth/register")}
             >
               <Text
-                style={[styles.signUpText, { color: palette.textSecondary }]}
+                style={styles.signUpText}
               >
                 Don&apos;t have an account?{" "}
                 <Text style={styles.signUpLink}>Sign up</Text>
@@ -204,24 +204,29 @@ export default function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: { flex: 1, backgroundColor: Colors.brandNavy },
   scroll: { flexGrow: 1 },
+  scrollView: { backgroundColor: Colors.brandNavy },
   content: {
     flex: 1,
     paddingHorizontal: 24,
-    paddingTop: 20,
+    paddingTop: 30,
+    paddingBottom: 24,
   },
-  welcomeSection: {
+  logoPanel: {
     alignItems: "center",
-    marginBottom: 40,
-    marginTop: 40,
+    marginBottom: 34,
+    marginTop: 28,
   },
   title: {
-    fontSize: 32,
-    fontWeight: "bold",
+    color: Colors.white,
+    fontSize: 22,
+    fontWeight: "700",
+    marginTop: 26,
   },
   form: { width: "100%" },
   label: {
+    color: Colors.white,
     fontSize: 14,
     fontWeight: "600",
     marginBottom: 8,
@@ -260,21 +265,22 @@ const styles = StyleSheet.create({
     height: 18,
     borderRadius: 4,
     borderWidth: 1,
-    borderColor: Colors.primary,
+    borderColor: Colors.brandCyan,
     marginRight: 8,
     justifyContent: "center",
     alignItems: "center",
   },
   checkboxChecked: {
-    backgroundColor: Colors.primary,
+    backgroundColor: Colors.brandTeal,
   },
   checkboxLabel: {
+    color: Colors.brandPale,
     fontSize: 14,
   },
   forgotPassword: { alignSelf: "flex-end" },
-  forgotText: { color: Colors.primary, fontSize: 13 },
+  forgotText: { color: Colors.brandCyan, fontSize: 13 },
   signInButton: {
-    backgroundColor: Colors.primary,
+    backgroundColor: Colors.brandTeal,
     borderRadius: 12,
     padding: 16,
     alignItems: "center",
@@ -291,7 +297,7 @@ const styles = StyleSheet.create({
   },
   facebookButton: {
     borderWidth: 1,
-    borderColor: Colors.primary,
+    borderColor: Colors.brandPale,
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
@@ -316,12 +322,13 @@ const styles = StyleSheet.create({
     color: "#fff",
   },
   socialButtonText: {
+    color: Colors.white,
     fontSize: 15,
     fontWeight: "500",
   },
   googleButton: {
     borderWidth: 1,
-    borderColor: Colors.primary,
+    borderColor: Colors.brandPale,
     borderRadius: 12,
     padding: 16,
     marginBottom: 24,
@@ -346,10 +353,11 @@ const styles = StyleSheet.create({
     color: "#4285f4",
   },
   googleButtonText: {
+    color: Colors.white,
     fontSize: 15,
     fontWeight: "500",
   },
   signUpButton: { alignItems: "center" },
-  signUpText: { fontSize: 14 },
-  signUpLink: { color: Colors.primary, fontWeight: "bold" },
+  signUpText: { color: Colors.brandPale, fontSize: 14 },
+  signUpLink: { color: Colors.brandCyan, fontWeight: "bold" },
 });

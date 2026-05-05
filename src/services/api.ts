@@ -56,6 +56,8 @@ type AuthResponse = {
 export type ChatListItem = {
   id: string;
   name: string;
+  peerId?: string | null;
+  peerSocketId?: string | null;
   lastMessage: string;
   time: string;
   unreadCount: number;
@@ -85,6 +87,8 @@ export type DirectoryUser = {
   id: string;
   fullName: string;
   email: string;
+  socketId?: string | null;
+  isOnline?: boolean;
 };
 
 export type DirectChatResult = {
