@@ -9,32 +9,16 @@ const USER_KEY = "stylnk_auth_user";
 const getHostFromExpo = () => {
   const candidates = [
     Constants.expoConfig?.hostUri,
-    (Constants as Record<string, any>).expoGoConfig?.debuggerHost,
-    (Constants as Record<string, any>).manifest2?.extra?.expoClient?.hostUri,
-    (Constants as Record<string, any>).manifest?.debuggerHost,
+    (Constants as any).expoGoConfig?.debuggerHost,
+    (Constants as any).manifest2?.extra?.expoClient?.hostUri,
+    (Constants as any).manifest?.debuggerHost,
   ].filter(Boolean) as string[];
 
   for (const value of candidates) {
     const host = value.split("://").pop()?.split(":")[0];
-    if (host) {
-      return host;
-    }
+    if (host) return host;
   }
-
   return null;
-};
-
-/** Android emulator: `localhost` is the emulator itself, not your PC. This reaches the host machine. */
-const ANDROID_EMULATOR_HOST = "10.0.2.2";
-
-const resolveHostForApi = (host: string | null) => {
-  if (Platform.OS !== "android") {
-    return host ?? "localhost";
-  }
-  if (!host || host === "localhost" || host === "127.0.0.1") {
-    return ANDROID_EMULATOR_HOST;
-  }
-  return host;
 };
 
 const resolveBaseUrl = () => {
@@ -45,23 +29,23 @@ const resolveBaseUrl = () => {
     return "http://localhost:4000";
   }
 
-  const rawHost = getHostFromExpo();
-  const host = resolveHostForApi(rawHost);
-  return `http://${host}:4000`;
+  const host = getHostFromExpo();
+  if (host) {
+    return `http://${host}:4000`;
+  }
+
+  return "http://localhost:4000";
 };
 
 export const API_BASE_URL = resolveBaseUrl();
-export const SOCKET_BASE_URL = API_BASE_URL;
 
-export type MessageStatus = "sent" | "delivered" | "seen";
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 export type AuthUser = {
-  id: number;
-  name: string;
+  id: string;
   fullName: string;
   email: string;
   avatarUrl?: string | null;
-  createdAt?: string;
 };
 
 type AuthResponse = {
@@ -69,110 +53,65 @@ type AuthResponse = {
   user: AuthUser;
 };
 
-export type ConversationParticipant = {
-  id: number;
-  name: string;
-  fullName: string;
-  email: string;
-  avatarUrl?: string | null;
-  isOnline: boolean;
-};
-
-export type ConversationSummary = {
-  id: number;
-  title: string;
-  isGroup: boolean;
-  unreadCount: number;
-  lastMessage: string;
-  lastMessageAt: string | null;
-  lastMessageStatus: MessageStatus | null;
-  participants: ConversationParticipant[];
-};
-
-export type ChatMessage = {
-  id: number;
-  conversationId: number;
-  senderId: number;
-  senderName: string;
-  content: string;
-  createdAt: string;
-  status: MessageStatus;
-  clientId?: string | null;
-};
-
-export type DirectoryUser = {
-  id: number;
-  name: string;
-  fullName: string;
-  email: string;
-  avatarUrl?: string | null;
-  isOnline: boolean;
-};
-
-export type ConversationResult = {
-  id: number;
-  title: string;
-  isGroup: boolean;
-};
-
 export type ChatListItem = {
-  id: number;
+  id: string;
   name: string;
   lastMessage: string;
   time: string;
   unreadCount: number;
   isOnline: boolean;
   isGroup: boolean;
-  participants?: ConversationParticipant[];
-  lastMessageStatus?: MessageStatus | null;
+};
+
+export type ChatMessage = {
+  id: string;
+  text: string;
+  senderId: string;
+  senderName?: string;
+  createdAt: string;
 };
 
 export type GroupListItem = {
-  id: number;
+  id: string;
   name: string;
   description: string;
   memberCount: number;
   lastMessage: string;
   time: string;
   unreadCount: number;
-  participants?: ConversationParticipant[];
 };
 
-const withLegacyUserFields = <T extends { name: string }>(value: T) => ({
-  ...value,
-  fullName: value.name,
-});
+export type DirectoryUser = {
+  id: string;
+  fullName: string;
+  email: string;
+};
 
-const formatClock = (value: string | null) =>
-  value
-    ? new Date(value).toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-    : "";
+export type DirectChatResult = {
+  id: string;
+  name: string;
+};
 
-const toChatListItem = (conversation: ConversationSummary): ChatListItem => ({
-  id: conversation.id,
-  name: conversation.title,
-  lastMessage: conversation.lastMessage,
-  time: formatClock(conversation.lastMessageAt),
-  unreadCount: conversation.unreadCount,
-  isOnline: conversation.participants.some((participant) => participant.isOnline),
-  isGroup: conversation.isGroup,
-  participants: conversation.participants,
-  lastMessageStatus: conversation.lastMessageStatus,
-});
+export type CallListItem = {
+  id: string;
+  name: string;
+  peerId: string;
+  avatar: string | null;
+  type: "incoming" | "outgoing" | "missed";
+  callType: "audio" | "video";
+  duration: string | null;
+  time: string;
+  createdAt: string;
+};
 
-const toGroupListItem = (conversation: ConversationSummary): GroupListItem => ({
-  id: conversation.id,
-  name: conversation.title,
-  description: `Group chat with ${conversation.participants.length} members`,
-  memberCount: conversation.participants.length,
-  lastMessage: conversation.lastMessage,
-  time: formatClock(conversation.lastMessageAt),
-  unreadCount: conversation.unreadCount,
-  participants: conversation.participants,
-});
+export type LogCallPayload = {
+  recipientId: string;
+  callType: "audio" | "video";
+  status: "incoming" | "outgoing" | "missed";
+  duration?: string;
+};
+
+// ─── Core request helper ──────────────────────────────────────────────────────
 
 const request = async <T>(
   path: string,
@@ -214,11 +153,18 @@ const request = async <T>(
     throw new Error(message);
   }
 
+  // 204 No Content — nothing to parse
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
   return response.json();
 };
 
+// ─── API services ─────────────────────────────────────────────────────────────
+
 export const authApi = {
-  async register(input: { name: string; email: string; password: string }) {
+  async register(input: { fullName: string; email: string; password: string }) {
     const data = await request<AuthResponse>(
       "/auth/register",
       {
@@ -228,7 +174,7 @@ export const authApi = {
       false,
     );
     await authStorage.saveSession(data);
-    return withLegacyUserFields(data.user);
+    return data.user;
   },
   async login(input: { email: string; password: string }) {
     const data = await request<AuthResponse>(
@@ -240,7 +186,7 @@ export const authApi = {
       false,
     );
     await authStorage.saveSession(data);
-    return withLegacyUserFields(data.user);
+    return data.user;
   },
   async uploadAvatar(avatarUrl: string) {
     const data = await request<{ user: AuthUser }>(
@@ -252,69 +198,23 @@ export const authApi = {
       true,
     );
     const currentUser = await authStorage.updateCurrentUser(data.user);
-    return currentUser ?? withLegacyUserFields(data.user);
+    return currentUser ?? data.user;
   },
 };
 
 export const chatApi = {
-  async listChats() {
-    const conversations = await request<ConversationSummary[]>("/conversations", {}, true);
-    return conversations.map(toChatListItem);
+  listChats() {
+    return request<ChatListItem[]>("/chats", {}, true);
   },
-  async listConversations() {
-    const conversations = await request<ConversationSummary[]>("/conversations", {}, true);
-    return conversations.map((conversation) => ({
-      ...conversation,
-      participants: conversation.participants.map((participant) =>
-        withLegacyUserFields(participant),
-      ),
-    }));
+  listMessages(chatId: string) {
+    return request<ChatMessage[]>(`/chats/${chatId}/messages`, {}, true);
   },
-  async listGroups() {
-    const conversations = await request<ConversationSummary[]>("/groups", {}, true);
-    return conversations.map((conversation) => ({
-      ...conversation,
-      participants: conversation.participants.map((participant) =>
-        withLegacyUserFields(participant),
-      ),
-    }));
-  },
-  listMessages(conversationId: number) {
-    return request<ChatMessage[]>(`/conversations/${conversationId}/messages`, {}, true);
-  },
-  sendMessage(conversationId: number, content: string, clientId?: string) {
+  sendMessage(chatId: string, text: string) {
     return request<ChatMessage>(
-      `/conversations/${conversationId}/messages`,
+      `/chats/${chatId}/messages`,
       {
         method: "POST",
-        body: JSON.stringify({ content, clientId }),
-      },
-      true,
-    );
-  },
-  markSeen(conversationId: number) {
-    return request<{ ok: boolean }>(
-      `/conversations/${conversationId}/seen`,
-      { method: "POST" },
-      true,
-    );
-  },
-  startDirectConversation(recipientId: number) {
-    return request<ConversationResult>(
-      "/conversations/direct",
-      {
-        method: "POST",
-        body: JSON.stringify({ recipientId }),
-      },
-      true,
-    );
-  },
-  createGroupConversation(input: { title: string; participantIds: number[] }) {
-    return request<ConversationResult>(
-      "/conversations/group",
-      {
-        method: "POST",
-        body: JSON.stringify(input),
+        body: JSON.stringify({ text }),
       },
       true,
     );
@@ -322,54 +222,75 @@ export const chatApi = {
 };
 
 export const groupApi = {
-  async listGroups() {
-    const groups = await chatApi.listGroups();
-    return groups.map(toGroupListItem);
+  listGroups() {
+    return request<GroupListItem[]>("/groups", {}, true);
   },
 };
 
 export const userApi = {
-  async listUsers() {
-    const users = await request<DirectoryUser[]>("/users", {}, true);
-    return users.map((user) => withLegacyUserFields(user));
+  listUsers() {
+    return request<DirectoryUser[]>("/users", {}, true);
+  },
+};
+
+export const userStatsApi = {
+  getStats() {
+    return request<{ chats: number; groups: number; calls: number }>("/me/stats", {}, true);
   },
 };
 
 export const composeApi = {
-  async startDirectChat(recipientId: number) {
-    const conversation = await chatApi.startDirectConversation(recipientId);
-    return {
-      id: conversation.id,
-      name: conversation.title,
-    };
-  },
-  async createGroup(title: string, participantIds: number[]) {
-    const conversation = await chatApi.createGroupConversation({ title, participantIds });
-    return {
-      id: conversation.id,
-      name: conversation.title,
-    };
+  startDirectChat(recipientId: string) {
+    return request<DirectChatResult>(
+      "/chats/direct",
+      {
+        method: "POST",
+        body: JSON.stringify({ recipientId }),
+      },
+      true,
+    );
   },
 };
+
+export const callApi = {
+  listCalls() {
+    return request<CallListItem[]>("/calls", {}, true);
+  },
+  logCall(payload: LogCallPayload) {
+    return request<{ id: string }>(
+      "/calls",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+      true,
+    );
+  },
+  deleteCall(callId: string) {
+    return request<void>(
+      `/calls/${callId}`,
+      { method: "DELETE" },
+      true,
+    );
+  },
+};
+
+// ─── Auth storage ─────────────────────────────────────────────────────────────
 
 export const authStorage = {
   async saveSession(data: AuthResponse) {
     await AsyncStorage.multiSet([
       [TOKEN_KEY, data.token],
-      [USER_ID_KEY, String(data.user.id)],
-      [USER_KEY, JSON.stringify(withLegacyUserFields(data.user))],
+      [USER_ID_KEY, data.user.id],
+      [USER_KEY, JSON.stringify(data.user)],
     ]);
   },
   async hasSession() {
     const token = await AsyncStorage.getItem(TOKEN_KEY);
     return Boolean(token);
   },
-  async getToken() {
-    return AsyncStorage.getItem(TOKEN_KEY);
-  },
   async getCurrentUserId() {
-    const value = await AsyncStorage.getItem(USER_ID_KEY);
-    return value ? Number(value) : null;
+    return AsyncStorage.getItem(USER_ID_KEY);
   },
   async getCurrentUser() {
     const value = await AsyncStorage.getItem(USER_KEY);
@@ -390,14 +311,9 @@ export const authStorage = {
       return null;
     }
 
-    const nextUser = {
-      ...currentUser,
-      ...updates,
-      name: updates.name ?? updates.fullName ?? currentUser.name,
-      fullName: updates.fullName ?? updates.name ?? currentUser.fullName ?? currentUser.name,
-    };
+    const nextUser = { ...currentUser, ...updates };
     await AsyncStorage.multiSet([
-      [USER_ID_KEY, String(nextUser.id)],
+      [USER_ID_KEY, nextUser.id],
       [USER_KEY, JSON.stringify(nextUser)],
     ]);
     return nextUser;

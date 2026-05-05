@@ -1,61 +1,59 @@
+﻿import { MOCK_CHATS } from "@/constants/mockData";
 import {
-  BorderRadius,
-  Colors,
-  Shadows,
-  Spacing,
-  Typography,
+    BorderRadius,
+    Colors,
+    Shadows,
+    Spacing,
+    Typography,
 } from "@/constants/theme";
-import { useSession } from "@/src/providers/session-provider";
-import { authStorage, chatApi, type ChatMessage } from "@/src/services/api";
-import { realtimeClient } from "@/src/services/realtime";
+import { authStorage, chatApi } from "@/src/services/api";
 import { useAppTheme } from "@/src/theme/app-theme";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React from "react";
+import { useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  FlatList,
-  KeyboardAvoidingView,
-  Platform,
-  SafeAreaView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    FlatList,
+    KeyboardAvoidingView,
+    Platform,
+    SafeAreaView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 
-type MessageViewModel = ChatMessage & {
+type Message = {
+  id: string;
+  text: string;
   isMine: boolean;
   time: string;
-  pending?: boolean;
+  status?: "sent" | "delivered" | "read";
+  date?: string;
 };
 
-function formatTime(value: string) {
-  return new Date(value).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
+const INITIAL_MESSAGES: Message[] = [
+  { id: "1", text: "Hey! Are you free later?", isMine: false, time: "10:40 AM", date: "Today" },
+  { id: "2", text: "Yeah, what's up?", isMine: true, time: "10:41 AM", status: "read", date: "Today" },
+  { id: "3", text: "Let's grab coffee at 3pm?", isMine: false, time: "10:41 AM", date: "Today" },
+  { id: "4", text: "Sounds good! Where?", isMine: true, time: "10:42 AM", status: "read", date: "Today" },
+  { id: "5", text: "Hey! Are you free later?", isMine: false, time: "10:42 AM", date: "Today" },
+];
 
-function StatusIcon({ status }: { status: ChatMessage["status"] }) {
-  if (status === "sent") {
-    return <Ionicons name="checkmark" size={12} color={Colors.white} />;
-  }
-
-  if (status === "delivered") {
-    return <Ionicons name="checkmark-done" size={12} color="rgba(255,255,255,0.85)" />;
-  }
-
-  return <Ionicons name="checkmark-done" size={12} color="#C7BCFF" />;
+function DateSeparator({ date }: { date: string }) {
+  return (
+    <View style={styles.dateSeparator}>
+      <Text style={styles.dateText}>{date}</Text>
+    </View>
+  );
 }
 
 function MessageBubble({
   message,
   palette,
 }: {
-  message: MessageViewModel;
+  message: Message;
   palette: ReturnType<typeof useAppTheme>["palette"];
 }) {
   return (
@@ -64,32 +62,30 @@ function MessageBubble({
         style={[
           styles.bubble,
           message.isMine
-            ? [styles.bubbleMine, message.pending && styles.bubblePending]
+            ? styles.bubbleMine
             : [styles.bubbleOther, { backgroundColor: palette.surface }],
         ]}
       >
-        {!message.isMine && (
-          <Text style={[styles.senderName, { color: palette.textMuted }]}>
-            {message.senderName}
-          </Text>
-        )}
         <Text
           style={[
             styles.messageText,
             { color: message.isMine ? Colors.white : palette.text },
           ]}
         >
-          {message.content}
+          {message.text}
         </Text>
       </View>
       <View style={[styles.messageMeta, message.isMine && styles.messageMetaMine]}>
-        <Text style={[styles.messageTime, { color: palette.textMuted }]}>
+        <Text style={[styles.messageTime, { color: message.isMine ? Colors.white : palette.textMuted }]}>
           {message.time}
         </Text>
         {message.isMine && (
-          <View style={styles.statusWrap}>
-            <StatusIcon status={message.status} />
-          </View>
+          <Ionicons
+            name="checkmark-done"
+            size={12}
+            color={message.isMine ? Colors.white : Colors.primary}
+            style={{ marginLeft: 3 }}
+          />
         )}
       </View>
     </View>
@@ -100,186 +96,81 @@ export default function ChatScreen() {
   const router = useRouter();
   const { palette } = useAppTheme();
   const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
-  const { activeCall, incomingCall, startCall, acceptIncomingCall, declineIncomingCall, endCall } =
-    useSession();
-  const conversationId = Number(id);
-  const [messages, setMessages] = React.useState<MessageViewModel[]>([]);
-  const [input, setInput] = React.useState("");
-  const [loading, setLoading] = React.useState(true);
-  const [currentUserId, setCurrentUserId] = React.useState<number | null>(null);
-  const flatListRef = React.useRef<FlatList>(null);
+  const chat = MOCK_CHATS.find((c) => c.id === id);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const flatListRef = useRef<FlatList>(null);
 
-  const mergeMessage = React.useCallback(
-    (message: ChatMessage, userId: number | null) => {
-      const next: MessageViewModel = {
-        ...message,
-        isMine: userId === message.senderId,
-        time: formatTime(message.createdAt),
-      };
-
-      setMessages((current) => {
-        const existingIndex = current.findIndex(
-          (item) =>
-            item.id === message.id ||
-            (message.clientId && item.clientId === message.clientId),
+  useEffect(() => {
+    const loadData = async () => {
+      if (!id) return;
+      const userId = await authStorage.getCurrentUserId();
+      setCurrentUserId(userId);
+      try {
+        const apiMessages = await chatApi.listMessages(id);
+        setMessages(
+          apiMessages.map((m) => ({
+            id: m.id,
+            text: m.text,
+            isMine: userId === m.senderId,
+            time: new Date(m.createdAt).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+            status: "sent",
+          })),
         );
-
-        if (existingIndex === -1) {
-          return [...current, next].sort(
-            (left, right) =>
-              new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime(),
-          );
-        }
-
-        const updated = [...current];
-        updated[existingIndex] = {
-          ...updated[existingIndex],
-          ...next,
-          pending: false,
-        };
-        return updated;
-      });
-    },
-    [],
-  );
-
-  const loadMessages = React.useCallback(async () => {
-    if (!Number.isInteger(conversationId) || conversationId <= 0) {
-      return;
-    }
-
-    setLoading(true);
-    const userId = await authStorage.getCurrentUserId();
-    setCurrentUserId(userId);
-    try {
-      const apiMessages = await chatApi.listMessages(conversationId);
-      setMessages(
-        apiMessages.map((message) => ({
-          ...message,
-          isMine: userId === message.senderId,
-          time: formatTime(message.createdAt),
-        })),
-      );
-      realtimeClient.emit("conversation:open", { conversationId });
-      await chatApi.markSeen(conversationId);
-    } finally {
-      setLoading(false);
-    }
-  }, [conversationId]);
-
-  React.useEffect(() => {
-    void loadMessages();
-  }, [loadMessages]);
-
-  React.useEffect(() => {
-    const unsubscribeNew = realtimeClient.on("message:new", (message) => {
-      if (message.conversationId !== conversationId) {
-        return;
+      } catch {
+        setMessages(INITIAL_MESSAGES);
       }
-
-      mergeMessage(message, currentUserId);
-      if (message.senderId !== currentUserId) {
-        realtimeClient.emit("message:seen", { conversationId });
-        void chatApi.markSeen(conversationId);
-      }
-    });
-
-    const unsubscribeStatus = realtimeClient.on("message:status", (payload) => {
-      if (payload.conversationId !== conversationId) {
-        return;
-      }
-
-      setMessages((current) =>
-        current.map((message) =>
-          message.id === payload.messageId
-            ? { ...message, status: payload.status, pending: false }
-            : message,
-        ),
-      );
-    });
-
-    return () => {
-      unsubscribeNew();
-      unsubscribeStatus();
     };
-  }, [conversationId, currentUserId, mergeMessage]);
-
-  React.useEffect(() => {
-    if (messages.length > 0) {
-      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 50);
-    }
-  }, [messages]);
+    void loadData();
+  }, [id]);
 
   const sendMessage = async () => {
-    if (!input.trim() || !Number.isInteger(conversationId) || !currentUserId) {
-      return;
-    }
-
+    if (!input.trim()) return;
     const pendingText = input.trim();
-    const clientId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const optimistic: MessageViewModel = {
-      id: -Date.now(),
-      conversationId,
-      senderId: currentUserId,
-      senderName: "You",
-      content: pendingText,
-      createdAt: new Date().toISOString(),
-      time: formatTime(new Date().toISOString()),
-      status: "sent",
+    const newMsg: Message = {
+      id: Date.now().toString(),
+      text: pendingText,
       isMine: true,
-      pending: true,
-      clientId,
+      time: new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+      status: "sent",
     };
-
-    setMessages((current) => [...current, optimistic]);
+    setMessages((prev) => [...prev, newMsg]);
     setInput("");
-
+    setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+    if (!id || !currentUserId) return;
     try {
-      if (realtimeClient.isConnected()) {
-        const response = await realtimeClient.emitWithAck<{
-          ok: true;
-          message: ChatMessage;
-        }>("message:send", {
-          conversationId,
-          content: pendingText,
-          clientId,
-        });
-        mergeMessage(response.message, currentUserId);
-      } else {
-        const saved = await chatApi.sendMessage(conversationId, pendingText, clientId);
-        mergeMessage(saved, currentUserId);
-      }
-    } catch {
-      setMessages((current) =>
-        current.map((message) =>
-          message.clientId === clientId
+      const saved = await chatApi.sendMessage(id, pendingText);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === newMsg.id
             ? {
-                ...message,
-                pending: false,
-                status: "sent",
+                ...m,
+                id: saved.id,
+                time: new Date(saved.createdAt).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                }),
               }
-            : message,
+            : m,
         ),
       );
+    } catch {
+      // Keep optimistic message.
     }
   };
 
-  const handleStartCall = async (mode: "audio" | "video") => {
-    if (!Number.isInteger(conversationId) || conversationId <= 0) {
-      return;
-    }
-
-    await startCall({
-      conversationId,
-      mode,
-      peerName: name ?? "Conversation",
-    });
-  };
-
-  const currentCall =
-    activeCall && activeCall.conversationId === conversationId ? activeCall : null;
-  const currentIncomingCall =
-    incomingCall && incomingCall.conversationId === conversationId ? incomingCall : null;
+  const initials = (chat?.name ?? "U")
+    .split(" ")
+    .map((n) => n[0])
+    .slice(0, 2)
+    .join("");
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: palette.background }]}>
@@ -302,103 +193,68 @@ export default function ChatScreen() {
         </TouchableOpacity>
         <View style={styles.headerCenter}>
           <View style={styles.avatarCircle}>
-            <Text style={styles.avatarText}>
-              {(name ?? "Chat")
-                .split(" ")
-                .map((part) => part[0])
-                .slice(0, 2)
-                .join("")}
-            </Text>
+            <Text style={styles.avatarText}>{initials}</Text>
           </View>
-          <View style={styles.headerCopy}>
+          <View>
             <Text style={[styles.headerName, { color: palette.text }]}>
-              {name ?? "Chat"}
+              {name ?? chat?.name ?? "Chat"}
             </Text>
-            <Text style={[styles.headerStatus, { color: palette.textSecondary }]}>
-              {currentCall
-                ? currentCall.state === "connected"
-                  ? `${currentCall.mode === "audio" ? "Audio" : "Video"} call live`
-                  : "Calling..."
-                : "Realtime conversation"}
-            </Text>
+            {chat?.isOnline && <Text style={styles.headerStatus}>Online</Text>}
           </View>
         </View>
         <View style={styles.headerActions}>
           <TouchableOpacity
             style={[styles.actionBtn, { backgroundColor: palette.primarySurface }]}
-            onPress={() => void handleStartCall("audio")}
+            onPress={() => {
+              if (id) {
+                router.push({
+                  pathname: "/call/[id]",
+                  params: { id, name: name ?? chat?.name ?? "Unknown", type: "audio" },
+                });
+              }
+            }}
           >
             <Ionicons name="call-outline" size={20} color={Colors.primary} />
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.actionBtn, { backgroundColor: palette.primarySurface }]}
-            onPress={() => void handleStartCall("video")}
+            onPress={() => {
+              if (id) {
+                router.push({
+                  pathname: "/call/[id]",
+                  params: { id, name: name ?? chat?.name ?? "Unknown", type: "video" },
+                });
+              }
+            }}
           >
             <Ionicons name="videocam-outline" size={20} color={Colors.primary} />
           </TouchableOpacity>
         </View>
       </View>
 
-      {currentIncomingCall && (
-        <View style={[styles.callBanner, { backgroundColor: palette.card, borderColor: palette.border }]}>
-          <View style={styles.callBannerCopy}>
-            <Text style={[styles.callBannerTitle, { color: palette.text }]}>
-              Incoming {currentIncomingCall.mode} call
-            </Text>
-            <Text style={[styles.callBannerSubtitle, { color: palette.textSecondary }]}>
-              {currentIncomingCall.initiatedBy.name} is calling you
-            </Text>
-          </View>
-          <View style={styles.callBannerActions}>
-            <TouchableOpacity style={styles.declineBtn} onPress={declineIncomingCall}>
-              <Ionicons name="close" size={18} color={Colors.white} />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.acceptBtn} onPress={acceptIncomingCall}>
-              <Ionicons name="call" size={18} color={Colors.white} />
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
-
-      {currentCall && !currentIncomingCall && (
-        <View style={[styles.liveCallCard, { backgroundColor: palette.card, borderColor: palette.border }]}>
-          <View>
-            <Text style={[styles.callBannerTitle, { color: palette.text }]}>
-              {currentCall.direction === "outgoing" ? "Outgoing" : "Active"} {currentCall.mode} call
-            </Text>
-            <Text style={[styles.callBannerSubtitle, { color: palette.textSecondary }]}>
-              {currentCall.state === "connected"
-                ? `Connected with ${currentCall.peerName}`
-                : `Waiting for ${currentCall.peerName}`}
-            </Text>
-          </View>
-          <TouchableOpacity style={styles.endCallBtn} onPress={endCall}>
-            <Ionicons name="call" size={18} color={Colors.white} />
-          </TouchableOpacity>
-        </View>
-      )}
-
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        {loading ? (
-          <View style={styles.loadingState}>
-            <ActivityIndicator color={Colors.primary} />
-            <Text style={[styles.loadingText, { color: palette.textSecondary }]}>
-              Loading messages...
-            </Text>
-          </View>
-        ) : (
-          <FlatList
-            ref={flatListRef}
-            data={messages}
-            keyExtractor={(item) => `${item.id}-${item.clientId ?? "server"}`}
-            renderItem={({ item }) => <MessageBubble message={item} palette={palette} />}
-            contentContainerStyle={styles.messagesList}
-            showsVerticalScrollIndicator={false}
-          />
-        )}
+        <FlatList
+          ref={flatListRef}
+          data={messages}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item, index }) => {
+            const showDateSeparator = index === 0 || messages[index - 1]?.date !== item.date;
+            return (
+              <>
+                {showDateSeparator && item.date && <DateSeparator date={item.date} />}
+                <MessageBubble message={item} palette={palette} />
+              </>
+            );
+          }}
+          contentContainerStyle={styles.messagesList}
+          showsVerticalScrollIndicator={false}
+          onContentSizeChange={() =>
+            flatListRef.current?.scrollToEnd({ animated: false })
+          }
+        />
 
         <View
           style={[
@@ -411,9 +267,8 @@ export default function ChatScreen() {
         >
           <TouchableOpacity
             style={[styles.attachBtn, { backgroundColor: palette.primarySurface }]}
-            onPress={() => void handleStartCall("audio")}
           >
-            <Ionicons name="call-outline" size={20} color={Colors.primary} />
+            <Ionicons name="attach" size={22} color={Colors.primary} />
           </TouchableOpacity>
           <TextInput
             style={[
@@ -424,23 +279,22 @@ export default function ChatScreen() {
                 borderColor: palette.border,
               },
             ]}
-            placeholder="Type a message..."
+            placeholder="Type your message..."
             placeholderTextColor={palette.textMuted}
             value={input}
             onChangeText={setInput}
             multiline
-            maxLength={2000}
+            maxLength={1000}
           />
           {input.trim().length > 0 ? (
-            <TouchableOpacity style={styles.sendBtn} onPress={() => void sendMessage()}>
+            <TouchableOpacity style={styles.sendBtn} onPress={sendMessage}>
               <Ionicons name="send" size={18} color={Colors.white} />
             </TouchableOpacity>
           ) : (
             <TouchableOpacity
               style={[styles.micBtn, { backgroundColor: palette.primarySurface }]}
-              onPress={() => void handleStartCall("video")}
             >
-              <Ionicons name="videocam-outline" size={22} color={Colors.primary} />
+              <Ionicons name="mic-outline" size={22} color={Colors.primary} />
             </TouchableOpacity>
           )}
         </View>
@@ -472,9 +326,6 @@ const styles = StyleSheet.create({
     gap: Spacing.sm,
     marginLeft: Spacing.sm,
   },
-  headerCopy: {
-    flex: 1,
-  },
   avatarCircle: {
     width: 40,
     height: 40,
@@ -492,7 +343,7 @@ const styles = StyleSheet.create({
     fontSize: Typography.fontSizes.md,
     fontWeight: Typography.fontWeights.semibold,
   },
-  headerStatus: { fontSize: Typography.fontSizes.xs },
+  headerStatus: { fontSize: Typography.fontSizes.xs, color: Colors.online },
   headerActions: { flexDirection: "row", gap: 4 },
   actionBtn: {
     width: 36,
@@ -500,65 +351,6 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.full,
     alignItems: "center",
     justifyContent: "center",
-  },
-  callBanner: {
-    marginHorizontal: Spacing.lg,
-    marginTop: Spacing.md,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    padding: Spacing.md,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: Spacing.md,
-  },
-  liveCallCard: {
-    marginHorizontal: Spacing.lg,
-    marginTop: Spacing.md,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    padding: Spacing.md,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  callBannerCopy: { flex: 1 },
-  callBannerTitle: {
-    fontSize: Typography.fontSizes.md,
-    fontWeight: Typography.fontWeights.semibold,
-  },
-  callBannerSubtitle: {
-    marginTop: 2,
-    fontSize: Typography.fontSizes.sm,
-  },
-  callBannerActions: {
-    flexDirection: "row",
-    gap: 10,
-  },
-  declineBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: BorderRadius.full,
-    backgroundColor: Colors.danger,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  acceptBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: BorderRadius.full,
-    backgroundColor: Colors.success,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  endCallBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: BorderRadius.full,
-    backgroundColor: Colors.danger,
-    alignItems: "center",
-    justifyContent: "center",
-    transform: [{ rotate: "135deg" }],
   },
   messagesList: {
     paddingHorizontal: Spacing.lg,
@@ -583,14 +375,6 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary,
     borderBottomRightRadius: 4,
   },
-  bubblePending: {
-    opacity: 0.78,
-  },
-  senderName: {
-    fontSize: 11,
-    marginBottom: 4,
-    fontWeight: Typography.fontWeights.medium,
-  },
   messageText: {
     fontSize: Typography.fontSizes.md,
     lineHeight: 23,
@@ -603,9 +387,6 @@ const styles = StyleSheet.create({
   },
   messageMetaMine: { justifyContent: "flex-end" },
   messageTime: { fontSize: Typography.fontSizes.xs },
-  statusWrap: {
-    marginLeft: 4,
-  },
   inputBar: {
     flexDirection: "row",
     alignItems: "flex-end",
@@ -649,13 +430,18 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginBottom: 1,
   },
-  loadingState: {
-    flex: 1,
+  dateSeparator: {
     alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
+    marginVertical: 16,
   },
-  loadingText: {
-    fontSize: Typography.fontSizes.sm,
+  dateText: {
+    fontSize: 12,
+    color: Colors.primary,
+    backgroundColor: "#f0f0f0",
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    fontWeight: "600",
   },
 });
+

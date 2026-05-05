@@ -1,1392 +1,649 @@
-import path from "path";
-import dotenv from "dotenv";
-
-dotenv.config({ path: path.join(__dirname, "..", ".env") });
+import { PrismaClient } from "@prisma/client";
+import bcrypt from "bcryptjs";
 import cors from "cors";
+import "dotenv/config";
 import express from "express";
 import http from "http";
-import bcrypt from "bcryptjs";
-import { randomUUID } from "crypto";
+import jwt from "jsonwebtoken";
 import { Server } from "socket.io";
 import { z } from "zod";
-import {
-  type AuthRequest,
-  authMiddleware,
-  getBearerToken,
-  signToken,
-  verifyToken,
-} from "./auth";
-import { pool, query, withTransaction } from "./db";
-import type { PoolClient } from "pg";
 
-type SafeUser = {
-  id: number;
-  name: string;
-  email: string;
-  avatarUrl: string | null;
-  createdAt: string;
-};
-
-type ConversationParticipant = {
-  id: number;
-  name: string;
-  email: string;
-  avatarUrl: string | null;
-  isOnline: boolean;
-};
-
-type ConversationSummary = {
-  id: number;
-  title: string;
-  isGroup: boolean;
-  unreadCount: number;
-  lastMessage: string;
-  lastMessageAt: string | null;
-  lastMessageStatus: "sent" | "delivered" | "seen" | null;
-  participants: ConversationParticipant[];
-};
-
-type HydratedMessage = {
-  id: number;
-  conversationId: number;
-  senderId: number;
-  senderName: string;
-  content: string;
-  createdAt: string;
-  status: "sent" | "delivered" | "seen";
-  clientId?: string | null;
-};
-
-type ActiveCall = {
-  id: string;
-  conversationId: number;
-  initiatedBy: number;
-  mode: "audio" | "video";
-  participantIds: number[];
-  acceptedBy: Set<number>;
-  createdAt: string;
-};
-
-const port = Number(process.env.PORT || 4000);
 const app = express();
+const prisma = new PrismaClient();
+
+console.log("Prisma models:", Object.keys(prisma));
+
 const server = http.createServer(app);
+
 const io = new Server(server, {
   cors: {
     origin: "*",
   },
 });
 
-const onlineSockets = new Map<number, Set<string>>();
-const activeCalls = new Map<string, ActiveCall>();
+// userId → socketId map
+const users: Record<string, string> = {};
 
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ limit: "10mb", extended: true }));
 
-const registerSchema = z.object({
-  name: z.string().min(2).max(100),
-  email: z.string().email(),
-  password: z.string().min(6).max(128),
-});
+const jwtSecret = process.env.JWT_SECRET || "change-this-secret";
+const port = Number(process.env.PORT || 4000);
 
-const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(1).max(128),
-});
+type AuthRequest = express.Request & { userId?: string };
 
-const directConversationSchema = z.object({
-  recipientId: z.number().int().positive(),
-});
-
-const groupConversationSchema = z.object({
-  title: z.string().min(2).max(120),
-  participantIds: z.array(z.number().int().positive()).min(2),
-});
-
-const sendMessageSchema = z.object({
-  conversationId: z.number().int().positive().optional(),
-  content: z.string().min(1).max(2000),
-  clientId: z.string().min(1).max(100).optional(),
-});
-
-const avatarSchema = z.object({
-  avatarUrl: z.string().min(1).max(5_000_000),
-});
-
-const callStartSchema = z.object({
-  // Socket / JSON may deliver ids as strings; coerce so validation matches the client.
-  conversationId: z.coerce.number().int().positive(),
-  mode: z.enum(["audio", "video"]),
-});
-
-const callActionSchema = z.object({
-  callId: z.string().min(1),
-});
-
-const relaySchema = z.object({
-  callId: z.string().min(1),
-  targetUserId: z.number().int().positive(),
-  payload: z.any(),
-});
-
-function isUserOnline(userId: number) {
-  return (onlineSockets.get(userId)?.size ?? 0) > 0;
-}
-
-function addOnlineSocket(userId: number, socketId: string) {
-  const sockets = onlineSockets.get(userId) ?? new Set<string>();
-  sockets.add(socketId);
-  onlineSockets.set(userId, sockets);
-}
-
-function removeOnlineSocket(userId: number, socketId: string) {
-  const sockets = onlineSockets.get(userId);
-  if (!sockets) {
-    return;
+const auth = (
+  req: AuthRequest,
+  res: express.Response,
+  next: express.NextFunction,
+) => {
+  const header = req.headers.authorization;
+  if (!header?.startsWith("Bearer ")) {
+    return res.status(401).json({ message: "Missing auth token" });
   }
-
-  sockets.delete(socketId);
-  if (sockets.size === 0) {
-    onlineSockets.delete(userId);
+  const token = header.slice(7);
+  try {
+    const payload = jwt.verify(token, jwtSecret) as { userId: string };
+    req.userId = payload.userId;
+    next();
+  } catch {
+    return res.status(401).json({ message: "Invalid auth token" });
   }
-}
+};
 
-function emitPresenceSnapshot(socketId: string) {
-  io.to(socketId).emit("presence:snapshot", {
-    userIds: Array.from(onlineSockets.keys()),
-  });
-}
-
-function emitPresenceUpdate(userId: number, isOnline: boolean) {
-  io.emit("presence:update", { userId, isOnline });
-}
-
-function emitConversationRefresh(userIds: number[]) {
-  const uniqueUserIds = Array.from(new Set(userIds));
-  for (const userId of uniqueUserIds) {
-    io.to(`user:${userId}`).emit("conversation:refresh");
-  }
-}
-
-async function getConversationParticipantIds(
-  conversationId: number,
-  client?: PoolClient,
-) {
-  const result = await query<{ user_id: number }>(
-    `
-      SELECT user_id
-      FROM conversation_participants
-      WHERE conversation_id = $1
-      ORDER BY user_id ASC
-    `,
-    [conversationId],
-    client,
-  );
-
-  return result.rows.map((row) => row.user_id);
-}
-
-async function ensureConversationMember(
-  conversationId: number,
-  userId: number,
-  client?: PoolClient,
-) {
-  const result = await query(
-    `
-      SELECT 1
-      FROM conversation_participants
-      WHERE conversation_id = $1 AND user_id = $2
-      LIMIT 1
-    `,
-    [conversationId, userId],
-    client,
-  );
-
-  return (result.rowCount ?? 0) > 0;
-}
-
-async function listConversationParticipants(
-  conversationIds: number[],
-  currentUserId: number,
-) {
-  if (conversationIds.length === 0) {
-    return new Map<number, ConversationParticipant[]>();
-  }
-
-  const result = await query<{
-    conversation_id: number;
-    id: number;
-    name: string;
-    email: string;
-    avatar_url: string | null;
-  }>(
-    `
-      SELECT
-        cp.conversation_id,
-        u.id,
-        u.name,
-        u.email,
-        u.avatar_url
-      FROM conversation_participants cp
-      JOIN users u ON u.id = cp.user_id
-      WHERE cp.conversation_id = ANY($1::bigint[])
-      ORDER BY cp.conversation_id ASC, u.name ASC
-    `,
-    [conversationIds],
-  );
-
-  const grouped = new Map<number, ConversationParticipant[]>();
-
-  for (const row of result.rows) {
-    const next = grouped.get(row.conversation_id) ?? [];
-    next.push({
-      id: row.id,
-      name: row.name,
-      email: row.email,
-      avatarUrl: row.avatar_url,
-      isOnline: row.id === currentUserId ? true : isUserOnline(row.id),
-    });
-    grouped.set(row.conversation_id, next);
-  }
-
-  return grouped;
-}
-
-async function computeSenderStatus(
-  messageId: number,
-  senderId: number,
-  client?: PoolClient,
-) {
-  const result = await query<{ status: "sent" | "delivered" | "seen" }>(
-    `
-      SELECT
-        CASE
-          WHEN COUNT(*) FILTER (WHERE user_id <> $2) = 0 THEN 'sent'
-          WHEN COUNT(*) FILTER (WHERE user_id <> $2 AND status = 'seen') =
-               COUNT(*) FILTER (WHERE user_id <> $2) THEN 'seen'
-          WHEN COUNT(*) FILTER (WHERE user_id <> $2 AND status IN ('delivered', 'seen')) =
-               COUNT(*) FILTER (WHERE user_id <> $2) THEN 'delivered'
-          ELSE 'sent'
-        END AS status
-      FROM message_status
-      WHERE message_id = $1
-    `,
-    [messageId, senderId],
-    client,
-  );
-
-  return result.rows[0]?.status ?? "sent";
-}
-
-async function getHydratedMessage(
-  messageId: number,
-  viewerId: number,
-  client?: PoolClient,
-) {
-  const result = await query<{
-    id: number;
-    conversation_id: number;
-    sender_id: number;
-    sender_name: string;
-    content: string;
-    created_at: Date;
-    client_id: string | null;
-    recipient_status: "sent" | "delivered" | "seen" | null;
-  }>(
-    `
-      SELECT
-        m.id,
-        m.conversation_id,
-        m.sender_id,
-        u.name AS sender_name,
-        m.content,
-        m.created_at,
-        m.client_id,
-        ms.status AS recipient_status
-      FROM messages m
-      JOIN users u ON u.id = m.sender_id
-      LEFT JOIN message_status ms
-        ON ms.message_id = m.id
-       AND ms.user_id = $2
-      WHERE m.id = $1
-      LIMIT 1
-    `,
-    [messageId, viewerId],
-    client,
-  );
-
-  const row = result.rows[0];
-  if (!row) {
-    throw new Error("Message not found");
-  }
-
-  return {
-    id: row.id,
-    conversationId: row.conversation_id,
-    senderId: row.sender_id,
-    senderName: row.sender_name,
-    content: row.content,
-    createdAt: row.created_at.toISOString(),
-    clientId: row.client_id,
-    status:
-      row.sender_id === viewerId
-        ? await computeSenderStatus(row.id, viewerId, client)
-        : row.recipient_status ?? "delivered",
-  } satisfies HydratedMessage;
-}
-
-async function hydrateMessages(conversationId: number, viewerId: number) {
-  const result = await query<{
-    id: number;
-    conversation_id: number;
-    sender_id: number;
-    sender_name: string;
-    content: string;
-    created_at: Date;
-    client_id: string | null;
-    recipient_status: "sent" | "delivered" | "seen" | null;
-  }>(
-    `
-      SELECT
-        m.id,
-        m.conversation_id,
-        m.sender_id,
-        u.name AS sender_name,
-        m.content,
-        m.created_at,
-        m.client_id,
-        ms.status AS recipient_status
-      FROM messages m
-      JOIN users u ON u.id = m.sender_id
-      LEFT JOIN message_status ms
-        ON ms.message_id = m.id
-       AND ms.user_id = $2
-      WHERE m.conversation_id = $1
-      ORDER BY m.created_at ASC, m.id ASC
-    `,
-    [conversationId, viewerId],
-  );
-
-  const messages: HydratedMessage[] = [];
-  for (const row of result.rows) {
-    messages.push({
-      id: row.id,
-      conversationId: row.conversation_id,
-      senderId: row.sender_id,
-      senderName: row.sender_name,
-      content: row.content,
-      createdAt: row.created_at.toISOString(),
-      clientId: row.client_id,
-      status:
-        row.sender_id === viewerId
-          ? await computeSenderStatus(row.id, viewerId)
-          : row.recipient_status ?? "delivered",
-    });
-  }
-
-  return messages;
-}
-
-async function listConversationsForUser(userId: number, onlyGroups = false) {
-  const result = await query<{
-    id: number;
-    title: string | null;
-    is_group: boolean;
-    unread_count: number;
-    last_message: string | null;
-    last_message_at: Date | null;
-    last_message_sender_id: number | null;
-    last_message_id: number | null;
-  }>(
-    `
-      SELECT
-        c.id,
-        c.title,
-        c.is_group,
-        COALESCE(unread.unread_count, 0) AS unread_count,
-        latest.id AS last_message_id,
-        latest.content AS last_message,
-        latest.created_at AS last_message_at,
-        latest.sender_id AS last_message_sender_id
-      FROM conversations c
-      JOIN conversation_participants me
-        ON me.conversation_id = c.id
-       AND me.user_id = $1
-      LEFT JOIN LATERAL (
-        SELECT
-          m.id,
-          m.content,
-          m.created_at,
-          m.sender_id
-        FROM messages m
-        WHERE m.conversation_id = c.id
-        ORDER BY m.created_at DESC, m.id DESC
-        LIMIT 1
-      ) latest ON true
-      LEFT JOIN LATERAL (
-        SELECT COUNT(*)::int AS unread_count
-        FROM messages m
-        LEFT JOIN message_status ms
-          ON ms.message_id = m.id
-         AND ms.user_id = $1
-        WHERE m.conversation_id = c.id
-          AND m.sender_id <> $1
-          AND COALESCE(ms.status, 'sent') <> 'seen'
-      ) unread ON true
-      WHERE ($2::boolean = false OR c.is_group = true)
-      ORDER BY COALESCE(latest.created_at, c.created_at) DESC, c.id DESC
-    `,
-    [userId, onlyGroups],
-  );
-
-  const conversationIds = result.rows.map((row) => row.id);
-  const participantsByConversation = await listConversationParticipants(
-    conversationIds,
-    userId,
-  );
-
-  const summaries: ConversationSummary[] = [];
-  for (const row of result.rows) {
-    const participants = participantsByConversation.get(row.id) ?? [];
-    const otherParticipants = participants.filter((participant) => participant.id !== userId);
-    const computedTitle = row.is_group
-      ? row.title || "Group chat"
-      : otherParticipants.map((participant) => participant.name).join(", ") || "Direct chat";
-
-    let lastMessageStatus: "sent" | "delivered" | "seen" | null = null;
-    if (row.last_message_id && row.last_message_sender_id === userId) {
-      lastMessageStatus = await computeSenderStatus(row.last_message_id, userId);
-    }
-
-    summaries.push({
-      id: row.id,
-      title: computedTitle,
-      isGroup: row.is_group,
-      unreadCount: row.unread_count,
-      lastMessage: row.last_message ?? "No messages yet",
-      lastMessageAt: row.last_message_at?.toISOString() ?? null,
-      lastMessageStatus,
-      participants,
-    });
-  }
-
-  return summaries;
-}
-
-async function markMessagesDeliveredForUser(userId: number) {
-  const result = await query<{
-    message_id: number;
-    conversation_id: number;
-    sender_id: number;
-  }>(
-    `
-      UPDATE message_status ms
-      SET status = 'delivered',
-          updated_at = NOW()
-      FROM messages m
-      WHERE ms.message_id = m.id
-        AND ms.user_id = $1
-        AND ms.status = 'sent'
-        AND m.sender_id <> $1
-      RETURNING ms.message_id, m.conversation_id, m.sender_id
-    `,
-    [userId],
-  );
-
-  for (const row of result.rows) {
-    const status = await computeSenderStatus(row.message_id, row.sender_id);
-    io.to(`conversation:${row.conversation_id}`).emit("message:status", {
-      conversationId: row.conversation_id,
-      messageId: row.message_id,
-      status,
-    });
-  }
-}
-
-async function markConversationSeen(conversationId: number, userId: number) {
-  const result = await query<{
-    message_id: number;
-    sender_id: number;
-  }>(
-    `
-      UPDATE message_status ms
-      SET status = 'seen',
-          updated_at = NOW()
-      FROM messages m
-      WHERE ms.message_id = m.id
-        AND ms.user_id = $2
-        AND m.conversation_id = $1
-        AND m.sender_id <> $2
-        AND ms.status <> 'seen'
-      RETURNING ms.message_id, m.sender_id
-    `,
-    [conversationId, userId],
-  );
-
-  for (const row of result.rows) {
-    const status = await computeSenderStatus(row.message_id, row.sender_id);
-    io.to(`conversation:${conversationId}`).emit("message:status", {
-      conversationId,
-      messageId: row.message_id,
-      status,
-    });
-  }
-}
-
-async function createMessage(
-  conversationId: number,
-  senderId: number,
-  content: string,
-  clientId?: string,
-) {
-  return withTransaction(async (client) => {
-    const isMember = await ensureConversationMember(conversationId, senderId, client);
-    if (!isMember) {
-      throw new Error("Not a participant in this conversation");
-    }
-
-    const insertMessage = await query<{ id: number }>(
-      `
-        INSERT INTO messages (conversation_id, sender_id, content, client_id)
-        VALUES ($1, $2, $3, $4)
-        RETURNING id
-      `,
-      [conversationId, senderId, content.trim(), clientId ?? null],
-      client,
-    );
-
-    const messageId = insertMessage.rows[0].id;
-    const participantIds = await getConversationParticipantIds(conversationId, client);
-
-    for (const participantId of participantIds) {
-      const status =
-        participantId === senderId
-          ? "seen"
-          : isUserOnline(participantId)
-            ? "delivered"
-            : "sent";
-
-      await query(
-        `
-          INSERT INTO message_status (message_id, user_id, status, updated_at)
-          VALUES ($1, $2, $3, NOW())
-        `,
-        [messageId, participantId, status],
-        client,
-      );
-    }
-
-    const payloads = new Map<number, HydratedMessage>();
-    for (const participantId of participantIds) {
-      payloads.set(
-        participantId,
-        await getHydratedMessage(messageId, participantId, client),
-      );
-    }
-
-    return {
-      participantIds,
-      payloads,
-    };
-  });
-}
-
-async function findOrCreateDirectConversation(userId: number, recipientId: number) {
-  return withTransaction(async (client) => {
-    const existing = await query<{ id: number }>(
-      `
-        SELECT c.id
-        FROM conversations c
-        JOIN conversation_participants cp
-          ON cp.conversation_id = c.id
-        WHERE c.is_group = false
-          AND cp.user_id IN ($1, $2)
-        GROUP BY c.id
-        HAVING COUNT(DISTINCT cp.user_id) = 2
-           AND (
-             SELECT COUNT(*)
-             FROM conversation_participants inner_cp
-             WHERE inner_cp.conversation_id = c.id
-           ) = 2
-        LIMIT 1
-      `,
-      [userId, recipientId],
-      client,
-    );
-
-    if (existing.rows[0]) {
-      return existing.rows[0].id;
-    }
-
-    const conversationResult = await query<{ id: number }>(
-      `
-        INSERT INTO conversations (title, is_group, created_by)
-        VALUES (NULL, false, $1)
-        RETURNING id
-      `,
-      [userId],
-      client,
-    );
-
-    const conversationId = conversationResult.rows[0].id;
-    await query(
-      `
-        INSERT INTO conversation_participants (conversation_id, user_id, joined_at, last_read_at)
-        VALUES
-          ($1, $2, NOW(), NOW()),
-          ($1, $3, NOW(), NOW())
-      `,
-      [conversationId, userId, recipientId],
-      client,
-    );
-
-    return conversationId;
-  });
-}
-
-async function createGroupConversation(
-  creatorId: number,
-  title: string,
-  participantIds: number[],
-) {
-  return withTransaction(async (client) => {
-    const uniqueParticipantIds = Array.from(
-      new Set([creatorId, ...participantIds]),
-    ).sort((a, b) => a - b);
-
-    const usersResult = await query<{ id: number }>(
-      `
-        SELECT id
-        FROM users
-        WHERE id = ANY($1::bigint[])
-      `,
-      [uniqueParticipantIds],
-      client,
-    );
-
-    if (usersResult.rowCount !== uniqueParticipantIds.length) {
-      throw new Error("One or more participants were not found");
-    }
-
-    const conversationResult = await query<{ id: number }>(
-      `
-        INSERT INTO conversations (title, is_group, created_by)
-        VALUES ($1, true, $2)
-        RETURNING id
-      `,
-      [title.trim(), creatorId],
-      client,
-    );
-
-    const conversationId = conversationResult.rows[0].id;
-    for (const participantId of uniqueParticipantIds) {
-      await query(
-        `
-          INSERT INTO conversation_participants (
-            conversation_id,
-            user_id,
-            joined_at,
-            last_read_at
-          )
-          VALUES ($1, $2, NOW(), NOW())
-        `,
-        [conversationId, participantId],
-        client,
-      );
-    }
-
-    return conversationId;
-  });
-}
-
-async function getConversationTitleForUser(conversationId: number, userId: number) {
-  const summaries = await listConversationsForUser(userId);
-  return summaries.find((conversation) => conversation.id === conversationId)?.title ?? "Chat";
-}
-
-async function getUserName(userId: number) {
-  const result = await query<{ name: string }>(
-    `
-      SELECT name
-      FROM users
-      WHERE id = $1
-      LIMIT 1
-    `,
-    [userId],
-  );
-
-  return result.rows[0]?.name ?? "StyLnk User";
-}
-
-function toSafeUser(row: {
-  id: number;
-  name: string;
-  email: string;
-  avatar_url: string | null;
-  created_at: Date;
-}) {
-  return {
-    id: row.id,
-    name: row.name,
-    email: row.email,
-    avatarUrl: row.avatar_url,
-    createdAt: row.created_at.toISOString(),
-  } satisfies SafeUser;
-}
+const toTime = (date: Date) =>
+  new Date(date).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const asParam = (value: string | string[] | undefined) =>
+  Array.isArray(value) ? value[0] : value;
 
 app.get("/health", async (_req, res) => {
-  await query("SELECT 1");
-  res.json({ status: "ok" });
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({
+      status: "ok",
+      database: "connected",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: "error",
+      database: "disconnected",
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
 });
 
 app.post("/auth/register", async (req, res) => {
-  const parsed = registerSchema.safeParse(req.body);
+  const schema = z.object({
+    fullName: z.string().min(2),
+    email: z.string().email(),
+    password: z.string().min(6),
+  });
+
+  const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
-    return res.status(400).json({ message: "Invalid registration data" });
+    return res.status(400).json({ message: "Invalid request body" });
   }
 
-  const name = parsed.data.name.trim();
-  const email = parsed.data.email.trim().toLowerCase();
-  const passwordHash = await bcrypt.hash(parsed.data.password, 10);
-
-  try {
-    const result = await withTransaction(async (client) => {
-      const existing = await query(
-        `SELECT id FROM users WHERE email = $1 LIMIT 1`,
-        [email],
-        client,
-      );
-      if ((existing.rowCount ?? 0) > 0) {
-        throw new Error("Email already in use");
-      }
-
-      const insertUser = await query<{
-        id: number;
-        name: string;
-        email: string;
-        avatar_url: string | null;
-        created_at: Date;
-      }>(
-        `
-          INSERT INTO users (name, email, password)
-          VALUES ($1, $2, $3)
-          RETURNING id, name, email, avatar_url, created_at
-        `,
-        [name, email, passwordHash],
-        client,
-      );
-
-      const user = insertUser.rows[0];
-      await query(
-        `
-          INSERT INTO conversations (id, title, is_group, created_by)
-          VALUES (1, 'General', true, NULL)
-          ON CONFLICT (id) DO UPDATE
-          SET title = EXCLUDED.title, is_group = EXCLUDED.is_group
-        `,
-        [],
-        client,
-      );
-
-      await query(
-        `
-          INSERT INTO conversation_participants (
-            conversation_id,
-            user_id,
-            joined_at,
-            last_read_at
-          )
-          VALUES ($1, $2, NOW(), NOW())
-          ON CONFLICT (conversation_id, user_id) DO NOTHING
-        `,
-        [1, user.id],
-        client,
-      );
-
-      return user;
-    });
-
-    const safeUser = toSafeUser(result);
-    const token = signToken({ userId: safeUser.id, email: safeUser.email });
-    return res.status(201).json({ token, user: safeUser });
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Could not register user";
-    const status = message === "Email already in use" ? 409 : 500;
-    return res.status(status).json({ message });
+  const { fullName, email, password } = parsed.data;
+  const existing = await prisma.user.findUnique({ where: { email } });
+  if (existing) {
+    return res.status(409).json({ message: "Email already in use" });
   }
+
+  const passwordHash = await bcrypt.hash(password, 10);
+  const user = await prisma.user.create({
+    data: { fullName, email, passwordHash },
+  });
+
+  const generalChat = await prisma.chat.upsert({
+    where: { id: "general-chat" },
+    update: {},
+    create: {
+      id: "general-chat",
+      name: "General",
+      isGroup: true,
+    },
+  });
+
+  await prisma.chatMember.upsert({
+    where: {
+      chatId_userId: {
+        chatId: generalChat.id,
+        userId: user.id,
+      },
+    },
+    update: {},
+    create: {
+      chatId: generalChat.id,
+      userId: user.id,
+    },
+  });
+
+  const token = jwt.sign({ userId: user.id }, jwtSecret, { expiresIn: "7d" });
+
+  res.status(201).json({
+    token,
+    user: {
+      id: user.id,
+      fullName: user.fullName,
+      email: user.email,
+      avatarUrl: user.avatarUrl,
+    },
+  });
 });
 
 app.post("/auth/login", async (req, res) => {
-  const parsed = loginSchema.safeParse(req.body);
+  const schema = z.object({
+    email: z.string().email(),
+    password: z.string().min(1),
+  });
+
+  const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
-    return res.status(400).json({ message: "Invalid login data" });
+    return res.status(400).json({ message: "Invalid request body" });
   }
 
-  const email = parsed.data.email.trim().toLowerCase();
-  const password = parsed.data.password;
-
-  const result = await query<{
-    id: number;
-    name: string;
-    email: string;
-    password: string;
-    avatar_url: string | null;
-    created_at: Date;
-  }>(
-    `
-      SELECT id, name, email, password, avatar_url, created_at
-      FROM users
-      WHERE email = $1
-      LIMIT 1
-    `,
-    [email],
-  );
-
-  const user = result.rows[0];
+  const { email, password } = parsed.data;
+  const user = await prisma.user.findUnique({ where: { email } });
   if (!user) {
     return res.status(401).json({ message: "Invalid email or password" });
   }
-
-  const matches = await bcrypt.compare(password, user.password);
-  if (!matches) {
+  const ok = await bcrypt.compare(password, user.passwordHash);
+  if (!ok) {
     return res.status(401).json({ message: "Invalid email or password" });
   }
 
-  const safeUser = toSafeUser(user);
-  const token = signToken({ userId: safeUser.id, email: safeUser.email });
-  return res.json({ token, user: safeUser });
+  const token = jwt.sign({ userId: user.id }, jwtSecret, { expiresIn: "7d" });
+  res.json({
+    token,
+    user: {
+      id: user.id,
+      fullName: user.fullName,
+      email: user.email,
+      avatarUrl: user.avatarUrl,
+    },
+  });
 });
 
-app.get("/users", authMiddleware, async (req: AuthRequest, res) => {
-  const currentUserId = req.user!.userId;
-  const result = await query<{
-    id: number;
-    name: string;
-    email: string;
-    avatar_url: string | null;
-  }>(
-    `
-      SELECT id, name, email, avatar_url
-      FROM users
-      WHERE id <> $1
-      ORDER BY name ASC
-    `,
-    [currentUserId],
-  );
+app.patch("/me/avatar", auth, async (req: AuthRequest, res) => {
+  console.log("Avatar upload request received for user:", req.userId);
+
+  const schema = z.object({
+    avatarUrl: z
+      .string()
+      .min(1)
+      .max(10_000_000)
+      .refine(
+        (value) =>
+          value.startsWith("data:image/jpeg;base64,") ||
+          value.startsWith("data:image/png;base64,") ||
+          value.startsWith("data:image/jpg;base64,") ||
+          value.startsWith("data:image/webp;base64,"),
+        "Unsupported image format",
+      ),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    console.log("Avatar validation failed:", parsed.error);
+    return res
+      .status(400)
+      .json({ message: "Invalid avatar payload", error: parsed.error });
+  }
+
+  try {
+    console.log("Updating avatar for user:", req.userId);
+    const updatedUser = await prisma.user.update({
+      where: { id: req.userId! },
+      data: { avatarUrl: parsed.data.avatarUrl },
+    });
+
+    console.log("Avatar updated successfully for user:", req.userId);
+    res.json({
+      user: {
+        id: updatedUser.id,
+        fullName: updatedUser.fullName,
+        email: updatedUser.email,
+        avatarUrl: updatedUser.avatarUrl,
+      },
+    });
+  } catch (error) {
+    console.error("Database update error:", error);
+    res.status(500).json({
+      message: "Failed to update avatar in database",
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+app.get("/me/stats", auth, async (req: AuthRequest, res) => {
+  const userId = req.userId!;
+
+  const [chats, groups, calls] = await Promise.all([
+    prisma.chatMember.count({
+      where: { userId, chat: { isGroup: false } },
+    }),
+    prisma.chatMember.count({
+      where: { userId, chat: { isGroup: true } },
+    }),
+    prisma.call.count({
+      where: {
+        OR: [{ callerId: userId }, { recipientId: userId }],
+      },
+    }),
+  ]);
+
+  res.json({ chats, groups, calls });
+});
+
+app.get("/users", auth, async (req: AuthRequest, res) => {
+  const currentUserId = req.userId!;
+
+  const users = await prisma.user.findMany({
+    where: {
+      id: { not: currentUserId },
+    },
+    orderBy: { fullName: "asc" },
+    select: {
+      id: true,
+      fullName: true,
+      email: true,
+      avatarUrl: true,
+    },
+  });
+
+  res.json(users);
+});
+
+app.get("/chats", auth, async (req: AuthRequest, res) => {
+  const userId = req.userId!;
+  const memberships = await prisma.chatMember.findMany({
+    where: { userId },
+    include: {
+      chat: {
+        include: {
+          messages: {
+            orderBy: { createdAt: "desc" },
+            take: 1,
+          },
+          members: { include: { user: true } },
+        },
+      },
+    },
+    orderBy: { chat: { createdAt: "desc" } },
+  });
+
+  const result = memberships.map((m) => {
+    const last = m.chat.messages[0];
+    const oneToOnePeer = m.chat.members.find(
+      (cm) => cm.userId !== userId,
+    )?.user;
+    return {
+      id: m.chat.id,
+      name: m.chat.isGroup
+        ? m.chat.name
+        : oneToOnePeer?.fullName || m.chat.name,
+      isGroup: m.chat.isGroup,
+      isOnline: false,
+      unreadCount: 0,
+      lastMessage: last?.text || "No messages yet",
+      time: last ? toTime(last.createdAt) : "",
+    };
+  });
+
+  res.json(result);
+});
+
+app.post("/chats/direct", auth, async (req: AuthRequest, res) => {
+  const schema = z.object({
+    recipientId: z.string().min(1),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ message: "Invalid request body" });
+  }
+
+  const userId = req.userId!;
+  const { recipientId } = parsed.data;
+
+  if (recipientId === userId) {
+    return res.status(400).json({ message: "You can't message yourself" });
+  }
+
+  const recipient = await prisma.user.findUnique({
+    where: { id: recipientId },
+    select: { id: true, fullName: true },
+  });
+
+  if (!recipient) {
+    return res.status(404).json({ message: "User not found" });
+  }
+
+  const existingChats = await prisma.chat.findMany({
+    where: {
+      isGroup: false,
+      members: {
+        some: { userId },
+      },
+    },
+    include: {
+      members: true,
+    },
+  });
+
+  const existingChat = existingChats.find((chat) => {
+    const memberIds = chat.members.map((member) => member.userId);
+    return (
+      memberIds.length === 2 &&
+      memberIds.includes(userId) &&
+      memberIds.includes(recipientId)
+    );
+  });
+
+  if (existingChat) {
+    return res.json({ id: existingChat.id, name: recipient.fullName });
+  }
+
+  const chat = await prisma.chat.create({
+    data: {
+      name: recipient.fullName,
+      isGroup: false,
+      members: {
+        create: [{ userId }, { userId: recipientId }],
+      },
+    },
+  });
+
+  res.status(201).json({ id: chat.id, name: recipient.fullName });
+});
+
+app.get("/groups", auth, async (req: AuthRequest, res) => {
+  const userId = req.userId!;
+  const memberships = await prisma.chatMember.findMany({
+    where: {
+      userId,
+      chat: { isGroup: true },
+    },
+    include: {
+      chat: {
+        include: {
+          messages: {
+            include: { sender: true },
+            orderBy: { createdAt: "desc" },
+            take: 1,
+          },
+          members: { include: { user: true } },
+        },
+      },
+    },
+    orderBy: { chat: { createdAt: "desc" } },
+  });
+
+  const result = memberships.map((membership) => {
+    const lastMessage = membership.chat.messages[0];
+    return {
+      id: membership.chat.id,
+      name: membership.chat.name,
+      description:
+        membership.chat.name === "General"
+          ? "Shared space for everyone in StyLnk"
+          : `Group conversation with ${membership.chat.members.length} members`,
+      memberCount: membership.chat.members.length,
+      lastMessage: lastMessage
+        ? `${lastMessage.sender.fullName}: ${lastMessage.text}`
+        : "No messages yet",
+      time: lastMessage ? toTime(lastMessage.createdAt) : "",
+      unreadCount: 0,
+    };
+  });
+
+  res.json(result);
+});
+
+app.get("/chats/:id/messages", auth, async (req, res) => {
+  const chatId = asParam(req.params.id);
+  if (!chatId) {
+    return res.status(400).json({ message: "Missing chat id" });
+  }
+  const messages = await prisma.message.findMany({
+    where: { chatId },
+    include: { sender: true },
+    orderBy: { createdAt: "asc" },
+  });
 
   res.json(
-    result.rows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      email: row.email,
-      avatarUrl: row.avatar_url,
-      isOnline: isUserOnline(row.id),
+    messages.map((m) => ({
+      id: m.id,
+      text: m.text,
+      senderId: m.senderId,
+      senderName: m.sender.fullName,
+      createdAt: m.createdAt.toISOString(),
     })),
   );
 });
 
-app.get("/conversations", authMiddleware, async (req: AuthRequest, res) => {
-  const currentUserId = req.user!.userId;
-  const conversations = await listConversationsForUser(currentUserId);
-  res.json(conversations);
-});
-
-app.get("/groups", authMiddleware, async (req: AuthRequest, res) => {
-  const currentUserId = req.user!.userId;
-  const groups = await listConversationsForUser(currentUserId, true);
-  res.json(groups);
-});
-
-app.post("/conversations/direct", authMiddleware, async (req: AuthRequest, res) => {
-  const parsed = directConversationSchema.safeParse({
-    recipientId: Number(req.body?.recipientId),
-  });
+app.post("/chats/:id/messages", auth, async (req: AuthRequest, res) => {
+  const schema = z.object({ text: z.string().min(1).max(1000) });
+  const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
-    return res.status(400).json({ message: "Invalid recipient" });
+    return res.status(400).json({ message: "Invalid request body" });
   }
 
-  const currentUserId = req.user!.userId;
-  const recipientId = parsed.data.recipientId;
-
-  if (recipientId === currentUserId) {
-    return res.status(400).json({ message: "You can't message yourself" });
+  const chatId = asParam(req.params.id);
+  if (!chatId) {
+    return res.status(400).json({ message: "Missing chat id" });
+  }
+  const userId = req.userId!;
+  const membership = await prisma.chatMember.findUnique({
+    where: { chatId_userId: { chatId, userId } },
+  });
+  if (!membership) {
+    return res.status(403).json({ message: "Not a member of this chat" });
   }
 
-  const recipient = await query<{ id: number; name: string }>(
-    `SELECT id, name FROM users WHERE id = $1 LIMIT 1`,
-    [recipientId],
-  );
+  const message = await prisma.message.create({
+    data: {
+      chatId,
+      senderId: userId,
+      text: parsed.data.text.trim(),
+    },
+  });
 
-  if (!recipient.rows[0]) {
+  res.status(201).json({
+    id: message.id,
+    text: message.text,
+    senderId: message.senderId,
+    createdAt: message.createdAt.toISOString(),
+  });
+});
+
+// ─── Calls ────────────────────────────────────────────────────────────────────
+
+app.get("/calls", auth, async (req: AuthRequest, res) => {
+  const userId = req.userId!;
+  const calls = await prisma.call.findMany({
+    where: {
+      OR: [{ callerId: userId }, { recipientId: userId }],
+    },
+    include: {
+      User_Call_callerIdToUser: { select: { id: true, fullName: true, avatarUrl: true } },
+      User_Call_recipientIdToUser: { select: { id: true, fullName: true, avatarUrl: true } },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+  });
+
+  const result = calls.map((c) => {
+    const isOutgoing = c.callerId === userId;
+    const peer = isOutgoing ? c.User_Call_recipientIdToUser : c.User_Call_callerIdToUser;
+    return {
+      id: c.id,
+      name: peer.fullName,
+      peerId: peer.id,
+      avatar: peer.avatarUrl,
+      type: isOutgoing
+        ? "outgoing"
+        : c.status === "missed"
+          ? "missed"
+          : "incoming",
+      callType: c.callType,
+      duration: c.duration || null,
+      time: toTime(c.createdAt),
+      createdAt: c.createdAt.toISOString(),
+    };
+  });
+
+  res.json(result);
+});
+
+app.post("/calls", auth, async (req: AuthRequest, res) => {
+  const schema = z.object({
+    recipientId: z.string().min(1),
+    callType: z.enum(["audio", "video"]),
+    status: z.enum(["incoming", "outgoing", "missed"]),
+    duration: z.string().optional(),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ message: "Invalid request body" });
+  }
+
+  const { recipientId, callType, status, duration } = parsed.data;
+  const callerId = req.userId!;
+
+  if (recipientId === callerId) {
+    return res.status(400).json({ message: "Cannot call yourself" });
+  }
+
+  const recipient = await prisma.user.findUnique({
+    where: { id: recipientId },
+  });
+  if (!recipient) {
     return res.status(404).json({ message: "Recipient not found" });
   }
 
-  const conversationId = await findOrCreateDirectConversation(
-    currentUserId,
-    recipientId,
-  );
-  emitConversationRefresh([currentUserId, recipientId]);
+  const call = await prisma.call.create({
+    data: { callerId, recipientId, callType, status, duration },
+  });
 
   res.status(201).json({
-    id: conversationId,
-    title: recipient.rows[0].name,
-    isGroup: false,
+    id: call.id,
+    callerId: call.callerId,
+    callType: call.callType,
+    status: call.status,
+    duration: call.duration,
+    createdAt: call.createdAt.toISOString(),
   });
 });
 
-app.post("/conversations/group", authMiddleware, async (req: AuthRequest, res) => {
-  const parsed = groupConversationSchema.safeParse({
-    title: req.body?.title,
-    participantIds: Array.isArray(req.body?.participantIds)
-      ? req.body.participantIds.map((value: unknown) => Number(value))
-      : [],
+app.patch("/calls/:id", auth, async (req: AuthRequest, res) => {
+  const schema = z.object({
+    status: z.enum(["incoming", "outgoing", "missed"]).optional(),
+    duration: z.string().optional(),
   });
 
+  const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
-    return res.status(400).json({ message: "Invalid group payload" });
+    return res.status(400).json({ message: "Invalid request body" });
   }
 
-  try {
-    const conversationId = await createGroupConversation(
-      req.user!.userId,
-      parsed.data.title,
-      parsed.data.participantIds,
-    );
-    const participantIds = Array.from(
-      new Set([req.user!.userId, ...parsed.data.participantIds]),
-    );
-    emitConversationRefresh(participantIds);
+  const callId = asParam(req.params.id);
+  if (!callId) return res.status(400).json({ message: "Missing call id" });
+  const userId = req.userId!;
 
-    res.status(201).json({
-      id: conversationId,
-      title: parsed.data.title.trim(),
-      isGroup: true,
-    });
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Could not create group";
-    res.status(400).json({ message });
+  const existing = await prisma.call.findUnique({ where: { id: callId } });
+  if (!existing) return res.status(404).json({ message: "Call not found" });
+  if (existing.callerId !== userId && existing.recipientId !== userId) {
+    return res.status(403).json({ message: "Not authorised" });
   }
+
+  const updated = await prisma.call.update({
+    where: { id: callId },
+    data: parsed.data,
+  });
+
+  res.json({
+    id: updated.id,
+    status: updated.status,
+    duration: updated.duration,
+  });
 });
 
-app.get(
-  "/conversations/:id/messages",
-  authMiddleware,
-  async (req: AuthRequest, res) => {
-    const conversationId = Number(req.params.id);
-    if (!Number.isInteger(conversationId) || conversationId <= 0) {
-      return res.status(400).json({ message: "Invalid conversation id" });
-    }
+app.delete("/calls/:id", auth, async (req: AuthRequest, res) => {
+  const callId = asParam(req.params.id);
+  if (!callId) return res.status(400).json({ message: "Missing call id" });
+  const userId = req.userId!;
 
-    const currentUserId = req.user!.userId;
-    const isMember = await ensureConversationMember(conversationId, currentUserId);
-    if (!isMember) {
-      return res.status(403).json({ message: "Not a participant in this conversation" });
-    }
-
-    const messages = await hydrateMessages(conversationId, currentUserId);
-    await markConversationSeen(conversationId, currentUserId);
-    res.json(messages);
-  },
-);
-
-app.post(
-  "/conversations/:id/messages",
-  authMiddleware,
-  async (req: AuthRequest, res) => {
-    const parsed = sendMessageSchema.safeParse({
-      conversationId: Number(req.params.id),
-      content: req.body?.content,
-      clientId: req.body?.clientId,
-    });
-    if (!parsed.success) {
-      return res.status(400).json({ message: "Invalid message payload" });
-    }
-
-    try {
-      const { payloads, participantIds } = await createMessage(
-        parsed.data.conversationId!,
-        req.user!.userId,
-        parsed.data.content,
-        parsed.data.clientId,
-      );
-
-      for (const participantId of participantIds) {
-        io.to(`user:${participantId}`).emit("message:new", payloads.get(participantId));
-      }
-
-      io.to(`conversation:${parsed.data.conversationId}`).emit("conversation:refresh");
-      emitConversationRefresh(participantIds);
-      res.status(201).json(payloads.get(req.user!.userId));
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Could not send message";
-      const status = message.includes("participant") ? 403 : 500;
-      res.status(status).json({ message });
-    }
-  },
-);
-
-app.post(
-  "/conversations/:id/seen",
-  authMiddleware,
-  async (req: AuthRequest, res) => {
-    const conversationId = Number(req.params.id);
-    if (!Number.isInteger(conversationId) || conversationId <= 0) {
-      return res.status(400).json({ message: "Invalid conversation id" });
-    }
-
-    const currentUserId = req.user!.userId;
-    const isMember = await ensureConversationMember(conversationId, currentUserId);
-    if (!isMember) {
-      return res.status(403).json({ message: "Not a participant in this conversation" });
-    }
-
-    await markConversationSeen(conversationId, currentUserId);
-    await query(
-      `
-        UPDATE conversation_participants
-        SET last_read_at = NOW()
-        WHERE conversation_id = $1 AND user_id = $2
-      `,
-      [conversationId, currentUserId],
-    );
-
-    res.json({ ok: true });
-  },
-);
-
-app.patch("/me/avatar", authMiddleware, async (req: AuthRequest, res) => {
-  const parsed = avatarSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ message: "Invalid avatar payload" });
+  const existing = await prisma.call.findUnique({ where: { id: callId } });
+  if (!existing) return res.status(404).json({ message: "Call not found" });
+  if (existing.callerId !== userId && existing.recipientId !== userId) {
+    return res.status(403).json({ message: "Not authorised" });
   }
 
-  const result = await query<{
-    id: number;
-    name: string;
-    email: string;
-    avatar_url: string | null;
-    created_at: Date;
-  }>(
-    `
-      UPDATE users
-      SET avatar_url = $2
-      WHERE id = $1
-      RETURNING id, name, email, avatar_url, created_at
-    `,
-    [req.user!.userId, parsed.data.avatarUrl],
-  );
-
-  if (!result.rows[0]) {
-    return res.status(404).json({ message: "User not found" });
-  }
-
-  res.json({ user: toSafeUser(result.rows[0]) });
+  await prisma.call.delete({ where: { id: callId } });
+  res.status(204).send();
 });
 
-io.use((socket, next) => {
-  const token =
-    typeof socket.handshake.auth.token === "string"
-      ? socket.handshake.auth.token
-      : getBearerToken(
-          typeof socket.handshake.headers.authorization === "string"
-            ? socket.handshake.headers.authorization
-            : undefined,
-        );
+// ─── SOCKET.IO CALL SYSTEM ─────────────────────────────────────────────
 
-  if (!token) {
-    next(new Error("Missing auth token"));
-    return;
-  }
+io.on("connection", (socket) => {
+  console.log("User connected:", socket.id);
 
-  try {
-    const payload = verifyToken(token);
-    socket.data.user = payload;
-    next();
-  } catch {
-    next(new Error("Invalid auth token"));
-  }
-});
-
-io.on("connection", async (socket) => {
-  const user = socket.data.user as { userId: number; email: string };
-  addOnlineSocket(user.userId, socket.id);
-  socket.join(`user:${user.userId}`);
-
-  const memberships = await query<{ conversation_id: number }>(
-    `
-      SELECT conversation_id
-      FROM conversation_participants
-      WHERE user_id = $1
-    `,
-    [user.userId],
-  );
-
-  for (const row of memberships.rows) {
-    socket.join(`conversation:${row.conversation_id}`);
-  }
-
-  emitPresenceSnapshot(socket.id);
-  emitPresenceUpdate(user.userId, true);
-  await markMessagesDeliveredForUser(user.userId);
-  emitConversationRefresh([user.userId]);
-
-  socket.on("conversation:open", async (payload: unknown) => {
-    const parsed = z
-      .object({ conversationId: z.number().int().positive() })
-      .safeParse(payload);
-    if (!parsed.success) {
-      return;
-    }
-
-    const isMember = await ensureConversationMember(
-      parsed.data.conversationId,
-      user.userId,
-    );
-    if (!isMember) {
-      return;
-    }
-
-    socket.join(`conversation:${parsed.data.conversationId}`);
-    await markConversationSeen(parsed.data.conversationId, user.userId);
-    await query(
-      `
-        UPDATE conversation_participants
-        SET last_read_at = NOW()
-        WHERE conversation_id = $1 AND user_id = $2
-      `,
-      [parsed.data.conversationId, user.userId],
-    );
-    emitConversationRefresh([user.userId]);
+  // Register logged-in user
+  socket.on("register", (userId: string) => {
+    users[userId] = socket.id;
+    console.log("Registered:", userId, socket.id);
   });
 
-  socket.on(
-    "message:send",
-    async (payload: unknown, acknowledge?: (value: unknown) => void) => {
-      const parsed = sendMessageSchema.safeParse(payload);
-      if (!parsed.success || !parsed.data.conversationId) {
-        acknowledge?.({ ok: false, message: "Invalid message payload" });
-        return;
-      }
+  // ─── CALL USER ─────────────────────────────
+  socket.on("call-user", ({ toUserId, offer }) => {
+    const targetSocket = users[toUserId];
 
-      try {
-        const { payloads, participantIds } = await createMessage(
-          parsed.data.conversationId,
-          user.userId,
-          parsed.data.content,
-          parsed.data.clientId,
-        );
-
-        for (const participantId of participantIds) {
-          io.to(`user:${participantId}`).emit("message:new", payloads.get(participantId));
-        }
-
-        io.to(`conversation:${parsed.data.conversationId}`).emit("conversation:refresh");
-        emitConversationRefresh(participantIds);
-        acknowledge?.({ ok: true, message: payloads.get(user.userId) });
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Could not send message";
-        acknowledge?.({ ok: false, message });
-      }
-    },
-  );
-
-  socket.on("message:seen", async (payload: unknown) => {
-    const parsed = z
-      .object({ conversationId: z.number().int().positive() })
-      .safeParse(payload);
-    if (!parsed.success) {
+    if (!targetSocket) {
+      console.log("User not online:", toUserId);
       return;
     }
 
-    const isMember = await ensureConversationMember(
-      parsed.data.conversationId,
-      user.userId,
-    );
-    if (!isMember) {
-      return;
-    }
-
-    await markConversationSeen(parsed.data.conversationId, user.userId);
-    emitConversationRefresh([user.userId]);
-  });
-
-  socket.on(
-    "call:start",
-    async (payload: unknown, acknowledge?: (value: unknown) => void) => {
-      const parsed = callStartSchema.safeParse(payload);
-      if (!parsed.success) {
-        acknowledge?.({ ok: false, message: "Invalid call payload" });
-        return;
-      }
-
-      const isMember = await ensureConversationMember(
-        parsed.data.conversationId,
-        user.userId,
-      );
-      if (!isMember) {
-        acknowledge?.({ ok: false, message: "Not a participant in this conversation" });
-        return;
-      }
-
-      const participantIds = await getConversationParticipantIds(parsed.data.conversationId);
-      const callId = randomUUID();
-      const call: ActiveCall = {
-        id: callId,
-        conversationId: parsed.data.conversationId,
-        initiatedBy: user.userId,
-        mode: parsed.data.mode,
-        participantIds,
-        acceptedBy: new Set<number>([user.userId]),
-        createdAt: new Date().toISOString(),
-      };
-      activeCalls.set(callId, call);
-
-      const callerName = await getUserName(user.userId);
-
-      for (const participantId of participantIds) {
-        if (participantId === user.userId) {
-          continue;
-        }
-
-        io.to(`user:${participantId}`).emit("call:incoming", {
-          callId,
-          conversationId: parsed.data.conversationId,
-          mode: parsed.data.mode,
-          initiatedBy: {
-            id: user.userId,
-            name: callerName,
-          },
-          createdAt: call.createdAt,
-        });
-      }
-
-      acknowledge?.({
-        ok: true,
-        call: {
-          callId,
-          conversationId: parsed.data.conversationId,
-          participantIds: participantIds.filter((participantId) => participantId !== user.userId),
-          mode: parsed.data.mode,
-          createdAt: call.createdAt,
-        },
-      });
-    },
-  );
-
-  socket.on("call:accept", (payload: unknown) => {
-    const parsed = callActionSchema.safeParse(payload);
-    if (!parsed.success) {
-      return;
-    }
-
-    const call = activeCalls.get(parsed.data.callId);
-    if (!call || !call.participantIds.includes(user.userId)) {
-      return;
-    }
-
-    call.acceptedBy.add(user.userId);
-    io.to(`conversation:${call.conversationId}`).emit("call:accepted", {
-      callId: call.id,
-      conversationId: call.conversationId,
-      userId: user.userId,
+    io.to(targetSocket).emit("incoming-call", {
+      fromUserId: socket.id,
+      offer,
     });
   });
 
-  socket.on("call:decline", (payload: unknown) => {
-    const parsed = callActionSchema.safeParse(payload);
-    if (!parsed.success) {
-      return;
-    }
-
-    const call = activeCalls.get(parsed.data.callId);
-    if (!call) {
-      return;
-    }
-
-    io.to(`conversation:${call.conversationId}`).emit("call:declined", {
-      callId: call.id,
-      conversationId: call.conversationId,
-      userId: user.userId,
-    });
-    activeCalls.delete(call.id);
+  // ─── ANSWER CALL ───────────────────────────
+  socket.on("answer-call", ({ toSocketId, answer }) => {
+    io.to(toSocketId).emit("call-answered", { answer });
   });
 
-  socket.on("call:end", (payload: unknown) => {
-    const parsed = callActionSchema.safeParse(payload);
-    if (!parsed.success) {
-      return;
-    }
-
-    const call = activeCalls.get(parsed.data.callId);
-    if (!call) {
-      return;
-    }
-
-    io.to(`conversation:${call.conversationId}`).emit("call:ended", {
-      callId: call.id,
-      conversationId: call.conversationId,
-      userId: user.userId,
-    });
-    activeCalls.delete(call.id);
+  // ─── ICE CANDIDATES ────────────────────────
+  socket.on("ice-candidate", ({ toSocketId, candidate }) => {
+    io.to(toSocketId).emit("ice-candidate", { candidate });
   });
 
-  socket.on("webrtc:offer", (payload: unknown) => {
-    const parsed = relaySchema.safeParse(payload);
-    if (!parsed.success) {
-      return;
-    }
-    io.to(`user:${parsed.data.targetUserId}`).emit("webrtc:offer", {
-      callId: parsed.data.callId,
-      fromUserId: user.userId,
-      payload: parsed.data.payload,
-    });
-  });
-
-  socket.on("webrtc:answer", (payload: unknown) => {
-    const parsed = relaySchema.safeParse(payload);
-    if (!parsed.success) {
-      return;
-    }
-    io.to(`user:${parsed.data.targetUserId}`).emit("webrtc:answer", {
-      callId: parsed.data.callId,
-      fromUserId: user.userId,
-      payload: parsed.data.payload,
-    });
-  });
-
-  socket.on("webrtc:ice-candidate", (payload: unknown) => {
-    const parsed = relaySchema.safeParse(payload);
-    if (!parsed.success) {
-      return;
-    }
-    io.to(`user:${parsed.data.targetUserId}`).emit("webrtc:ice-candidate", {
-      callId: parsed.data.callId,
-      fromUserId: user.userId,
-      payload: parsed.data.payload,
-    });
+  // ─── END CALL ──────────────────────────────
+  socket.on("end-call", ({ toSocketId }) => {
+    io.to(toSocketId).emit("call-ended");
   });
 
   socket.on("disconnect", () => {
-    removeOnlineSocket(user.userId, socket.id);
-    if (!isUserOnline(user.userId)) {
-      emitPresenceUpdate(user.userId, false);
+    console.log("User disconnected:", socket.id);
+
+    // cleanup mapping
+    for (const userId in users) {
+      if (users[userId] === socket.id) {
+        delete users[userId];
+        break;
+      }
     }
   });
 });
 
+// ─── Start ────────────────────────────────────────────────────────────────────
+
 server.listen(port, () => {
   console.log(`Backend listening on http://localhost:${port}`);
-});
-
-process.on("SIGINT", async () => {
-  await pool.end();
-  process.exit(0);
-});
-
-process.on("SIGTERM", async () => {
-  await pool.end();
-  process.exit(0);
 });

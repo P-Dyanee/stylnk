@@ -36,7 +36,7 @@ export default function NewMessageScreen() {
   const [currentUser, setCurrentUser] = React.useState<AuthUser | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [refreshing, setRefreshing] = React.useState(false);
-  const [creatingFor, setCreatingFor] = React.useState<number | null>(null);
+  const [creatingFor, setCreatingFor] = React.useState<string | null>(null);
 
   const loadUsers = React.useCallback(async (showRefresh = false) => {
     if (showRefresh) {
@@ -108,7 +108,7 @@ export default function NewMessageScreen() {
       router.replace({
         pathname: "/chat/[id]",
         params: {
-          id: String(chat.id),
+          id: chat.id,
           name: chat.name,
         },
       });
@@ -161,7 +161,7 @@ export default function NewMessageScreen() {
       ) : (
         <FlatList
           data={filteredUsers}
-          keyExtractor={(item) => String(item.id)}
+          keyExtractor={(item) => item.id}
           refreshing={refreshing}
           onRefresh={() => loadUsers(true)}
           showsVerticalScrollIndicator={false}

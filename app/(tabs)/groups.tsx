@@ -7,10 +7,9 @@ import {
 } from "@/constants/theme";
 import { authStorage, groupApi, type GroupListItem } from "@/src/services/api";
 import { useAppTheme } from "@/src/theme/app-theme";
-import { realtimeClient } from "@/src/services/realtime";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
-import React from "react";
+import React, { useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -26,10 +25,10 @@ import {
 export default function GroupsScreen() {
   const router = useRouter();
   const { palette } = useAppTheme();
-  const [search, setSearch] = React.useState("");
-  const [groups, setGroups] = React.useState<GroupListItem[]>([]);
-  const [loading, setLoading] = React.useState(true);
-  const [refreshing, setRefreshing] = React.useState(false);
+  const [search, setSearch] = useState("");
+  const [groups, setGroups] = useState<GroupListItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   const loadGroups = React.useCallback(async (showRefresh = false) => {
     if (showRefresh) {
@@ -59,17 +58,9 @@ export default function GroupsScreen() {
 
   useFocusEffect(
     React.useCallback(() => {
-      void loadGroups();
+      loadGroups();
     }, [loadGroups]),
   );
-
-  React.useEffect(() => {
-    const unsubscribe = realtimeClient.on("conversation:refresh", () => {
-      void loadGroups(true);
-    });
-
-    return () => unsubscribe();
-  }, [loadGroups]);
 
   const filteredGroups = groups.filter(
     (group) =>
@@ -80,18 +71,12 @@ export default function GroupsScreen() {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: palette.background }]}>
       <View style={styles.header}>
-        <View>
-          <Text style={[styles.title, { color: palette.text }]}>Groups</Text>
-          <Text style={[styles.subtitle, { color: palette.textSecondary }]}>
-            Shared spaces that update live
-          </Text>
-        </View>
+        <Text style={[styles.title, { color: palette.text }]}>Groups</Text>
         <TouchableOpacity
           style={[styles.headerButton, { backgroundColor: palette.primarySurface }]}
           activeOpacity={0.8}
-          onPress={() => router.push("/new-group")}
         >
-          <Ionicons name="add" size={20} color={Colors.primary} />
+          <Ionicons name="people-outline" size={20} color={Colors.primary} />
         </TouchableOpacity>
       </View>
 
@@ -134,11 +119,11 @@ export default function GroupsScreen() {
       ) : (
         <FlatList
           data={filteredGroups}
-          keyExtractor={(item) => String(item.id)}
+          keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           refreshing={refreshing}
-          onRefresh={() => void loadGroups(true)}
+          onRefresh={() => loadGroups(true)}
           ItemSeparatorComponent={() => (
             <View style={[styles.separator, { backgroundColor: palette.divider }]} />
           )}
@@ -155,7 +140,7 @@ export default function GroupsScreen() {
               <Text style={[styles.emptyText, { color: palette.textSecondary }]}>
                 {search
                   ? "Try a different name or topic."
-                  : "Create a new group to start a shared chat."}
+                  : "Join or create a group to see it here."}
               </Text>
             </View>
           }
@@ -176,7 +161,7 @@ export default function GroupsScreen() {
                   router.push({
                     pathname: "/chat/[id]",
                     params: {
-                      id: String(item.id),
+                      id: item.id,
                       name: item.name,
                     },
                   })
@@ -249,10 +234,6 @@ const styles = StyleSheet.create({
   title: {
     fontSize: Typography.fontSizes.xxxl,
     fontWeight: Typography.fontWeights.bold,
-  },
-  subtitle: {
-    fontSize: Typography.fontSizes.sm,
-    marginTop: 2,
   },
   headerButton: {
     width: 40,
